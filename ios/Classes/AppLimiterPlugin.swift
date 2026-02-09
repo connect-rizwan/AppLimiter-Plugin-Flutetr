@@ -30,6 +30,11 @@ public class AppLimiterPlugin: NSObject, FlutterPlugin {
     /// - getPlatformVersion: Returns the current iOS version
     /// - blockApp: Initiates the app blocking process (iOS 16+ only)
     /// - requestPermission: Requests Screen Time permissions (iOS 16+ only)
+    /// - showAppPicker: Shows app picker for selecting apps to block (iOS 15+ only)
+    /// - blockIOSApps: Blocks the selected apps (iOS 15+ only)
+    /// - unblockIOSApps: Unblocks all apps (iOS 15+ only)
+    /// - isIOSAppsBlocked: Checks if apps are currently blocked (iOS 15+ only)
+    /// - getAuthorizationStatus: Gets current authorization status (iOS 16+ only)
     /// - Parameter call: The method call from Flutter
     /// - Parameter result: The callback to send the result back to Flutter
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -48,6 +53,41 @@ public class AppLimiterPlugin: NSObject, FlutterPlugin {
         if #available(iOS 16.0, *) {
             requestPermission(result: result)
         }else {
+                result(FlutterError(code: "UNSUPPORTED", message: "iOS 16+ required", details: nil))
+            }
+
+        case "showAppPicker":
+            if #available(iOS 16.0, *) {
+                showAppPicker(result: result)
+            } else {
+                result(FlutterError(code: "UNSUPPORTED", message: "iOS 16+ required", details: nil))
+            }
+
+        case "blockIOSApps":
+            if #available(iOS 16.0, *) {
+                blockIOSApps(result: result)
+            } else {
+                result(FlutterError(code: "UNSUPPORTED", message: "iOS 16+ required", details: nil))
+            }
+
+        case "unblockIOSApps":
+            if #available(iOS 16.0, *) {
+                unblockIOSApps(result: result)
+            } else {
+                result(FlutterError(code: "UNSUPPORTED", message: "iOS 16+ required", details: nil))
+            }
+
+        case "isIOSAppsBlocked":
+            if #available(iOS 16.0, *) {
+                isIOSAppsBlocked(result: result)
+            } else {
+                result(FlutterError(code: "UNSUPPORTED", message: "iOS 16+ required", details: nil))
+            }
+
+        case "getAuthorizationStatus":
+            if #available(iOS 16.0, *) {
+                getAuthorizationStatus(result: result)
+            } else {
                 result(FlutterError(code: "UNSUPPORTED", message: "iOS 16+ required", details: nil))
             }
 
@@ -107,30 +147,101 @@ public class AppLimiterPlugin: NSObject, FlutterPlugin {
 
     private func presentContentView(method: String) {
         if #available(iOS 13.0, *) {
-            guard let rootVC = UIApplication.shared.delegate?.window??.rootViewController else {
-                print("Root view controller not found")
+            // Get root view controller using modern API
+            guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else {
+                return
+            }
+
+            guard let rootVC = windowScene.windows.first(where: { $0.isKeyWindow })?.rootViewController else {
+                // Fallback: try to get any root view controller
+                guard let fallbackVC = windowScene.windows.first?.rootViewController else {
+                    return
+                }
+                presentViewController(method: method, from: fallbackVC)
                 return
             }
 
             globalMethodCall = method
-            let vc: UIViewController
+            presentViewController(method: method, from: rootVC)
+        }
+    }
 
+    private func presentViewController(method: String, from rootVC: UIViewController) {
+        DispatchQueue.main.async {
             if #available(iOS 15.0, *) {
-                // Using SwiftUI in iOS 15+ devices
-                vc = UIHostingController(
+                let vc = UIHostingController(
                     rootView: ContentView()
                         .environmentObject(MyModel.shared)
                         .environmentObject(ManagedSettingsStore())
                 )
+                rootVC.present(vc, animated: true)
             } else {
-                // Fallback for earlier versions (UI only, no SwiftUI)
-                vc = UIViewController()
-                // Fallback code to present non-SwiftUI view if needed.
+                let vc = UIViewController()
+                rootVC.present(vc, animated: true)
             }
-            rootVC.present(vc, animated: true, completion: nil)
+        }
+    }
+
+    /// Shows app picker UI for selecting apps to block
+    @available(iOS 16.0, *)
+    private func showAppPicker(result: @escaping FlutterResult) {
+        let status = AuthorizationCenter.shared.authorizationStatus
+
+        if status == .approved {
+            presentContentView(method: "selectAppsForBlocking")
+            result(nil)
         } else {
-            // If the device is older than iOS 13, handle the fallback or error
-            print("This feature requires iOS 13 or later")
+            Task {
+                do {
+                    try await AuthorizationCenter.shared.requestAuthorization(for: .individual)
+                    let newStatus = AuthorizationCenter.shared.authorizationStatus
+
+                    if newStatus == .approved {
+                        presentContentView(method: "selectAppsForBlocking")
+                        result(nil)
+                    } else {
+                        result(FlutterError(code: "PERMISSION_DENIED", message: "User denied permission", details: nil))
+                    }
+                } catch {
+                    result(FlutterError(code: "AUTH_ERROR", message: "Failed to request authorization", details: error.localizedDescription))
+                }
+            }
+        }
+    }
+
+    /// Blocks the selected apps
+    @available(iOS 16.0, *)
+    private func blockIOSApps(result: @escaping FlutterResult) {
+        MyModel.shared.blockApps()
+        result(nil)
+    }
+
+    /// Unblocks all apps
+    @available(iOS 16.0, *)
+    private func unblockIOSApps(result: @escaping FlutterResult) {
+        MyModel.shared.unblockApps()
+        result(nil)
+    }
+
+    /// Checks if apps are currently blocked
+    @available(iOS 16.0, *)
+    private func isIOSAppsBlocked(result: @escaping FlutterResult) {
+        let isBlocked = MyModel.shared.isAppsBlocked()
+        result(isBlocked)
+    }
+
+    @available(iOS 16.0, *)
+    private func getAuthorizationStatus(result: @escaping FlutterResult) {
+        let status = AuthorizationCenter.shared.authorizationStatus
+        switch status {
+        case .notDetermined:
+            result("notDetermined")
+        case .approved:
+            result("authorized")
+        case .denied:
+            result("denied")
+        @unknown default:
+            result("notDetermined")
         }
     }
 }

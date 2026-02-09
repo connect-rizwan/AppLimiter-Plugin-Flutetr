@@ -50,4 +50,22 @@ abstract class AppLimiterPlatform extends PlatformInterface {
 
   /// Unblocks previously blocked Android apps.
   Future<void> unblockAndroidApps();
+
+  // iOS App Blocking methods
+
+  /// Shows the app picker UI for selecting apps to block (iOS only).
+  Future<void> showIOSAppPicker();
+
+  /// Blocks the previously selected apps (iOS only).
+  Future<void> blockIOSApps();
+
+  /// Unblocks all apps (iOS only).
+  Future<void> unblockIOSApps();
+
+  /// Checks if apps are currently blocked (iOS only).
+  Future<bool> isIOSAppsBlocked();
+
+  /// Gets the current Screen Time authorization status (iOS only).
+  /// Returns one of: "notDetermined", "authorized", "denied"
+  Future<String> getIOSAuthorizationStatus();
 }

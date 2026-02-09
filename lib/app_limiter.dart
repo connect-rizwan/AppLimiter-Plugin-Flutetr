@@ -67,4 +67,66 @@ class AppLimiter {
   Future<void> unblocAndroidApp() {
     return AppLimiterPlatform.instance.unblockAndroidApps();
   }
+
+  // iOS App Blocking methods
+
+  /// Shows the app picker UI for selecting apps to block.
+  ///
+  /// This method displays the Screen Time API's app selection interface.
+  /// Selected apps are saved but not immediately blocked.
+  /// Call [blockIOSApps] to actually start blocking the selected apps.
+  ///
+  /// **iOS only** - Requires iOS 15+
+  /// Throws a [PlatformException] if the operation fails or on unsupported platforms.
+  Future<void> showIOSAppPicker() {
+    return AppLimiterPlatform.instance.showIOSAppPicker();
+  }
+
+  /// Blocks the previously selected apps.
+  ///
+  /// This method blocks all apps that were selected via [showIOSAppPicker].
+  /// The blocking persists until [unblockIOSApps] is called.
+  /// Similar to [blockAndroidApps] on Android platform.
+  ///
+  /// **iOS only** - Requires iOS 15+
+  /// Throws a [PlatformException] if the operation fails or on unsupported platforms.
+  Future<void> blockIOSApps() {
+    return AppLimiterPlatform.instance.blockIOSApps();
+  }
+
+  /// Unblocks all apps.
+  ///
+  /// This method removes all app blocking restrictions.
+  /// Selected apps are preserved and can be blocked again by calling
+  /// [blockIOSApps].
+  /// Similar to [unblockAndroidApps] on Android platform.
+  ///
+  /// **iOS only** - Requires iOS 15+
+  /// Throws a [PlatformException] if the operation fails or on unsupported platforms.
+  Future<void> unblockIOSApps() {
+    return AppLimiterPlatform.instance.unblockIOSApps();
+  }
+
+  /// Checks if apps are currently blocked.
+  ///
+  /// Returns a [Future<bool>] that completes with:
+  /// * true - if apps are currently blocked
+  /// * false - if apps are not blocked
+  ///
+  /// **iOS only** - Requires iOS 15+
+  Future<bool> isIOSAppsBlocked() {
+    return AppLimiterPlatform.instance.isIOSAppsBlocked();
+  }
+
+  /// Gets the current Screen Time authorization status.
+  ///
+  /// Returns a [Future<String>] that completes with one of:
+  /// * "notDetermined" - User has not been asked for permission yet
+  /// * "authorized" - User has granted Screen Time permissions
+  /// * "denied" - User has denied Screen Time permissions
+  ///
+  /// **iOS only** - Requires iOS 16+
+  Future<String> getIOSAuthorizationStatus() {
+    return AppLimiterPlatform.instance.getIOSAuthorizationStatus();
+  }
 }

@@ -24,7 +24,8 @@ struct ContentView: View {
                 .onChange(of: model.selectionToEncourage) { _ in
                     MySchedule.setSchedule()
                 }
-
+        case "selectAppsForBlocking":
+            FamilyActivityPicker(selection: $model.selectedApps)
         default:
             Text("Default")
         }
@@ -46,6 +47,9 @@ struct ContentView: View {
                         model.setShieldRestrictions()
                     case "selectAppsToEncourage":
                         MySchedule.setSchedule()
+                    case "selectAppsForBlocking":
+                        let total = model.selectedApps.applicationTokens.count + model.selectedApps.categoryTokens.count
+                        print("AppPicker: Selected \(total) items")
                     default:
                         break
                     }

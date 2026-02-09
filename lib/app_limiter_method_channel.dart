@@ -83,4 +83,65 @@ class MethodChannelAppLimiter extends AppLimiterPlatform {
       debugPrint('Failed to unblock Android app: ${e.message}');
     }
   }
+
+  // iOS App Blocking methods
+  /// Shows the app picker UI for selecting apps to block (iOS only)
+  @override
+  Future<void> showIOSAppPicker() async {
+    try {
+      await methodChannel.invokeMethod('showAppPicker');
+    } on PlatformException catch (e) {
+      debugPrint('Failed to show app picker: ${e.message}');
+      rethrow;
+    }
+  }
+
+  /// Blocks the previously selected apps (iOS only)
+  @override
+  Future<void> blockIOSApps() async {
+    try {
+      await methodChannel.invokeMethod('blockIOSApps');
+    } on PlatformException catch (e) {
+      debugPrint('Failed to block iOS apps: ${e.message}');
+      rethrow;
+    }
+  }
+
+  /// Unblocks all apps (iOS only)
+  @override
+  Future<void> unblockIOSApps() async {
+    try {
+      await methodChannel.invokeMethod('unblockIOSApps');
+    } on PlatformException catch (e) {
+      debugPrint('Failed to unblock iOS apps: ${e.message}');
+      rethrow;
+    }
+  }
+
+  /// Checks if apps are currently blocked (iOS only)
+  @override
+  Future<bool> isIOSAppsBlocked() async {
+    try {
+      final result = await methodChannel.invokeMethod<bool>('isIOSAppsBlocked');
+      return result ?? false;
+    } on PlatformException catch (e) {
+      debugPrint('Failed to check iOS apps blocked status: ${e.message}');
+      return false;
+    }
+  }
+
+  /// Gets the current Screen Time authorization status (iOS only)
+  /// Returns one of: "notDetermined", "authorized", "denied"
+  @override
+  Future<String> getIOSAuthorizationStatus() async {
+    try {
+      final result = await methodChannel.invokeMethod<String>(
+        'getAuthorizationStatus',
+      );
+      return result ?? 'notDetermined';
+    } on PlatformException catch (e) {
+      debugPrint('Failed to get authorization status: ${e.message}');
+      return 'notDetermined';
+    }
+  }
 }

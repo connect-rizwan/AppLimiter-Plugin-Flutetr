@@ -43,6 +43,32 @@ class MockAppLimiterPlatform
   Future<void> unblockAndroidApps() async {
     blockCalled = true;
   }
+  
+  @override
+  Future<void> blockIOSApps() async {
+    blockCalled = true;
+  }
+  
+  @override
+  Future<String> getIOSAuthorizationStatus() async {
+    return 'authorized';
+  }
+  
+  @override
+  Future<bool> isIOSAppsBlocked() async {
+    blockCalled = false;
+    return true;
+  }
+  
+  @override
+  Future<void> showIOSAppPicker() async {
+    unblockCalled = false;
+  }
+  
+  @override
+  Future<void> unblockIOSApps() async {
+    unblockCalled = true;
+  }
 }
 
 void main() {
