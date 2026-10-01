@@ -1,3 +1,41 @@
+## [0.1.0] - 2026-10-01
+
+### Fixed
+- Android 14+ crash `MissingForegroundServiceTypeException` when blocking (#1, #4).
+  The blocking service is now a `specialUse` foreground service.
+- Overlay disappearing about 10 seconds after opening a blocked app.
+- Unblocking one Android package stopped blocking for every package.
+- Repeated block calls started duplicate blocking loops and leaked overlay views.
+- Blocking service kept running (with its notification) after permissions were revoked.
+- Settings could not be blocked; it is now exited to the home screen because it
+  hides third-party overlays.
+- iOS selection API called Android's `blockApp` method, which blocked every app on Android.
+- iOS picker never appeared in UIScene-based apps (Flutter's default template).
+- iOS UI work ran off the main thread after the authorization prompt.
+- iOS picker applied shields while the user was still choosing, and Cancel did not undo them.
+- iOS plugin failed to compile (`[AnyHashable: Any]` passed as `[String: Any]`).
+- `events` threw `MissingPluginException` on Android.
+- "Block all" skipped preinstalled apps (YouTube, Gmail, ...) because only non-system
+  apps were blocked; it now covers every app with a launcher icon except the dialer and Settings.
+
+### Added
+- iOS: `showIOSAppPicker()`, `blockIOSApps()`, `unblockIOSApps()`, `isIOSAppsBlocked()`,
+  `getIOSAuthorizationStatus()` to separate selection from blocking (#6).
+- Android: `blockAllAndroidApps()`, `unblockAllAndroidApps()`, `getBlockedAndroidApps()`,
+  `isAndroidBlockingActive()`.
+- Android blocking events (`android_blocking_state_changed`, `android_blocking_stopped`).
+- Blocking resumes after app updates as well as reboots.
+- Notification permission request on Android 13+.
+- Swift Package Manager support for iOS.
+- Unit tests (Dart and Kotlin) and on-device integration tests.
+
+### Changed
+- `blockAndroidApp`/`unblockAndroidApp` reject empty package names; use the `All` variants.
+- Blocking on Android fails with `PERMISSION_DENIED` instead of silently doing nothing.
+- `requestIosPermission()` returns false when the user declines instead of throwing.
+- Removed `SCHEDULE_EXACT_ALARM` from the plugin manifest.
+- Deprecated `blocAndroidApp()`, `unblocAndroidApp()` and `blockAndUnblockIOSApp()`.
+
 ## [0.0.1] - 2025-05-14
 
 - Initial release.
@@ -5,14 +43,16 @@
 - Handles permission requests on both platforms.
 - Added helper methods to check and request platform-specific permissions.
 
-
 ## [0.0.2] - 2025-05-21
+
 - Added Dartdoc comments for public API
 
 ## [0.0.3] - 2025-05-21
+
 - Added Dartdoc comments for public API
-- Readme File updated for easy configuration 
+- Readme File updated for easy configuration
 
 ## [0.0.4] - 2025-05-31
+
 - Block Overlay Hide Issue Fixed
-- Readme File updated for configuration 
+- Readme File updated for configuration

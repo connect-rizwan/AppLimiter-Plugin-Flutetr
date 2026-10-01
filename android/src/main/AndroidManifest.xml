@@ -1,29 +1,40 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-  package="com.example.app_limiter">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+
+  <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
+  <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <!-- Android 14+ requires a typed foreground service and the matching permission. -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
+
   <application>
-        <!-- Declare the service that will block apps -->
-        <service
-            android:name=".BlockAppService"
-            android:enabled="true"
-            android:exported="false" />
+    <!-- Declare the service that will block apps -->
+    <service android:name=".BlockAppService" android:enabled="true" android:exported="false" android:foregroundServiceType="specialUse">
+      <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Digital wellbeing: shows a blocking screen over apps the user chose to restrict." />
+    </service>
 
-        <!-- Declare the receiver that listens for boot events -->
-        <receiver
-            android:name=".BootReceiver"
-            android:enabled="true"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-        </receiver>
+    <!-- Restarts blocking after reboot or app update -->
+    <receiver android:name=".BootReceiver" android:enabled="true" android:exported="false">
+      <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+        <category android:name="android.intent.category.DEFAULT" />
+      </intent-filter>
+    </receiver>
 
-        <!-- Declare any other receiver like AmarmReceiver if needed -->
-        <receiver
-            android:name=".AmarmReceiver"
-            android:enabled="true"
-            android:exported="false" />
-            
-    </application>
+    <!-- Alarm receiver used for future scheduled unblock flows -->
+    <receiver android:name=".AlarmReceiver" android:enabled="true" android:exported="false" />
+
+    <!-- Optional receiver for enterprise/device-owner policy mode. -->
+    <receiver android:name=".EnterpriseAdminReceiver" android:enabled="true" android:exported="true" android:permission="android.permission.BIND_DEVICE_ADMIN">
+      <meta-data android:name="android.app.device_admin" android:resource="@xml/enterprise_device_admin" />
+      <intent-filter>
+        <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+      </intent-filter>
+    </receiver>
+
+  </application>
 
 </manifest>

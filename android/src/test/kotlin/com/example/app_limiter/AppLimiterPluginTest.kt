@@ -3,6 +3,9 @@ package com.example.app_limiter
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import kotlin.test.Test
+import org.mockito.ArgumentMatchers.any
+import org.mockito.ArgumentMatchers.anyString
+import org.mockito.ArgumentMatchers.eq
 import org.mockito.Mockito
 
 /*
@@ -23,5 +26,36 @@ internal class AppLimiterPluginTest {
     plugin.onMethodCall(call, mockResult)
 
     Mockito.verify(mockResult).success("Android " + android.os.Build.VERSION.RELEASE)
+  }
+
+  @Test
+  fun onMethodCall_blockAppWithoutPackage_returnsInvalidArgument() {
+    val plugin = AppLimiterPlugin()
+    val mockResult: MethodChannel.Result = Mockito.mock(MethodChannel.Result::class.java)
+
+    plugin.onMethodCall(MethodCall("blockApp", mapOf("packageName" to "  ")), mockResult)
+
+    Mockito.verify(mockResult).error(eq("INVALID_ARGUMENT"), anyString(), any())
+    Mockito.verify(mockResult, Mockito.never()).success(any())
+  }
+
+  @Test
+  fun onMethodCall_unblockAppWithoutPackage_returnsInvalidArgument() {
+    val plugin = AppLimiterPlugin()
+    val mockResult: MethodChannel.Result = Mockito.mock(MethodChannel.Result::class.java)
+
+    plugin.onMethodCall(MethodCall("unblockApp", emptyMap<String, Any>()), mockResult)
+
+    Mockito.verify(mockResult).error(eq("INVALID_ARGUMENT"), anyString(), any())
+  }
+
+  @Test
+  fun onMethodCall_unknownMethod_returnsNotImplemented() {
+    val plugin = AppLimiterPlugin()
+    val mockResult: MethodChannel.Result = Mockito.mock(MethodChannel.Result::class.java)
+
+    plugin.onMethodCall(MethodCall("doesNotExist", null), mockResult)
+
+    Mockito.verify(mockResult).notImplemented()
   }
 }
