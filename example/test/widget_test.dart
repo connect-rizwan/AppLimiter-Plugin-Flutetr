@@ -97,6 +97,7 @@ void main() {
     final unblockCall = calls.lastWhere((c) => c.method == 'unblockApps');
     expect(blockCall.arguments, {
       'packageNames': ['com.b'],
+      'durationMs': null,
     });
     expect(unblockCall.arguments, {
       'packageNames': ['com.a'],

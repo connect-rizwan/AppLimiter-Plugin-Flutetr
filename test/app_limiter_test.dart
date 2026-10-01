@@ -67,16 +67,36 @@ class FakeAppLimiterPlatform extends AppLimiterPlatform
   }
 
   @override
-  Future<void> androidBlockApps(List<String> packageNames) async =>
-      _record('androidBlockApps', packageNames);
+  Future<void> androidBlockApps(
+    List<String> packageNames, {
+    Duration? duration,
+  }) async => _record('androidBlockApps', [packageNames, duration]);
 
   @override
   Future<void> androidUnblockApps(List<String> packageNames) async =>
       _record('androidUnblockApps', packageNames);
 
   @override
-  Future<void> androidBlockAllApps({List<String> except = const []}) async =>
-      _record('androidBlockAllApps', except);
+  Future<void> androidBlockAllApps({
+    List<String> except = const [],
+    Duration? duration,
+  }) async => _record('androidBlockAllApps', [except, duration]);
+
+  List<BlockSchedule> schedules = const [];
+
+  @override
+  Future<void> androidSetSchedule(BlockSchedule schedule) async =>
+      _record('androidSetSchedule', schedule);
+
+  @override
+  Future<void> androidRemoveSchedule(String id) async =>
+      _record('androidRemoveSchedule', id);
+
+  @override
+  Future<List<BlockSchedule>> androidGetSchedules() async {
+    _record('androidGetSchedules');
+    return schedules;
+  }
 
   @override
   Future<void> androidSetBlockScreen(BlockScreenConfig config) async =>
@@ -211,15 +231,24 @@ void main() {
         'androidSetEnterpriseModeEnabled',
         'androidIsEnterpriseModeEnabled',
       ]);
-      expect(fake.arguments[0], ['a.b']);
-      expect(fake.arguments[1], ['c.d', 'e.f']);
+      expect(fake.arguments[0], [
+        ['a.b'],
+        null,
+      ]);
+      expect(fake.arguments[1], [
+        ['c.d', 'e.f'],
+        null,
+      ]);
       expect(fake.arguments[5], [true, true, 96]);
       expect(apps.single.packageName, 'a.b');
     });
 
     test('blockAllApps trims and validates the allowlist', () async {
       await limiter.android.blockAllApps(except: [' com.whatsapp ']);
-      expect(fake.arguments.single, ['com.whatsapp']);
+      expect(fake.arguments.single, [
+        ['com.whatsapp'],
+        null,
+      ]);
       expect(
         () => limiter.android.blockAllApps(except: ['']),
         throwsAppLimiter(AppLimiterErrorCode.invalidArgument),
@@ -233,6 +262,91 @@ void main() {
       expect(fake.calls, ['androidSetBlockScreen', 'androidSetNotification']);
       expect(fake.arguments[0], same(config));
       expect(fake.arguments[1], ['On', 'Blocking']);
+    });
+
+    test('durations are forwarded and validated', () async {
+      await limiter.android.blockApp(
+        'a.b',
+        duration: const Duration(minutes: 30),
+      );
+      await limiter.android.blockAllApps(duration: const Duration(hours: 1));
+      expect(fake.arguments[0], [
+        ['a.b'],
+        const Duration(minutes: 30),
+      ]);
+      expect(fake.arguments[1], [<String>[], const Duration(hours: 1)]);
+
+      expect(
+        () => limiter.android.blockApp('a.b', duration: Duration.zero),
+        throwsAppLimiter(AppLimiterErrorCode.invalidArgument),
+      );
+      expect(
+        () =>
+            limiter.android.blockAllApps(duration: const Duration(seconds: -1)),
+        throwsAppLimiter(AppLimiterErrorCode.invalidArgument),
+      );
+      expect(fake.calls, hasLength(2));
+    });
+
+    test('schedules are forwarded', () async {
+      const schedule = BlockSchedule(
+        id: 'night',
+        packages: ['com.game'],
+        start: DailyTime(22),
+        end: DailyTime(7),
+      );
+      fake.schedules = const [schedule];
+
+      await limiter.android.setSchedule(schedule);
+      await limiter.android.removeSchedule('night');
+      expect(await limiter.android.getSchedules(), [schedule]);
+
+      expect(fake.calls, [
+        'androidSetSchedule',
+        'androidRemoveSchedule',
+        'androidGetSchedules',
+      ]);
+      expect(fake.arguments[0], same(schedule));
+      expect(fake.arguments[1], 'night');
+    });
+
+    test('invalid schedules are rejected without calling native', () {
+      for (final schedule in const [
+        BlockSchedule(
+          id: ' ',
+          packages: ['a.b'],
+          start: DailyTime(1),
+          end: DailyTime(2),
+        ),
+        BlockSchedule(id: 'x', start: DailyTime(1), end: DailyTime(2)),
+        BlockSchedule(
+          id: 'x',
+          packages: ['a.b'],
+          start: DailyTime(1),
+          end: DailyTime(2),
+          weekdays: {},
+        ),
+        BlockSchedule(
+          id: 'x',
+          packages: ['a.b'],
+          start: DailyTime(1),
+          end: DailyTime(2),
+          weekdays: {0},
+        ),
+        BlockSchedule(
+          id: 'x',
+          packages: [''],
+          start: DailyTime(1),
+          end: DailyTime(2),
+        ),
+      ]) {
+        expect(
+          () => limiter.android.setSchedule(schedule),
+          throwsAppLimiter(AppLimiterErrorCode.invalidArgument),
+          reason: schedule.toString(),
+        );
+      }
+      expect(fake.calls, isEmpty);
     });
 
     test('rejects empty package names without calling native', () {

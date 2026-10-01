@@ -23,8 +23,15 @@
 - Android `blockAllApps(except: [...])` allowlist; `BlockingState.allowedPackages`.
 - `AppLimiterEventType.blockedAppOpened` event with the package name (Android).
 - Default texts are string resources that host apps can translate or override.
+- Android timed blocks: `duration:` on `blockApp`, `blockApps` and `blockAllApps`.
+- Android recurring schedules: `setSchedule(BlockSchedule)`, `removeSchedule`,
+  `getSchedules`, with overnight windows, weekdays and "all apps except".
+- `BlockingState.blockedUntil`, `blockAllUntil` and `activeScheduleIds`.
+- Events `blockExpired`, `scheduleStarted` and `scheduleEnded` (Android).
 
 ### Fixed
+- Crash `ForegroundServiceDidNotStartInTimeException` when blocking was turned off
+  right after it was turned on (for example a quick toggle) on Android 12+.
 - The block screen footer showed "Digital Wellbeing" (Google's product name); it now
   shows the host app's name.
 - A host app overriding the `block_overlay` layout no longer prevents the block screen

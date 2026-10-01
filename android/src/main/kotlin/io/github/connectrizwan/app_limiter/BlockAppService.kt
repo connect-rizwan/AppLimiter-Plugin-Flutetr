@@ -23,6 +23,7 @@ import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.WindowManager
+import java.util.concurrent.atomic.AtomicInteger
 import androidx.core.app.NotificationCompat
 
 const val CHANNEL_ID = "BlockAppService_Channel_ID"
@@ -51,6 +52,10 @@ class BlockAppService : Service() {
     /** Blocked app currently covered, so "opened" is reported once per visit. */
     private var currentBlockedPackage: String? = null
 
+    /** Cached schedules, reloaded whenever the plugin restarts the service. */
+    private var schedules: List<BlockSchedule> = emptyList()
+    private var activeScheduleIds: Set<String> = emptySet()
+
     private val overlayParams = WindowManager.LayoutParams(
         WindowManager.LayoutParams.MATCH_PARENT,
         WindowManager.LayoutParams.MATCH_PARENT,
@@ -66,9 +71,7 @@ class BlockAppService : Service() {
 
     private val blockingLoop = object : Runnable {
         override fun run() {
-            if (tick()) {
-                handler.postDelayed(this, POLL_INTERVAL_MS)
-            }
+            tick()?.let { delayMs -> handler.postDelayed(this, delayMs) }
         }
     }
 
@@ -83,18 +86,19 @@ class BlockAppService : Service() {
     override fun onBind(intent: Intent): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Every startForegroundService() call must be answered with startForeground().
-        if (!startInForeground()) {
-            stopSelf()
+        // Every startForegroundService() call must be answered with startForeground(),
+        // even when blocking was turned off again before this ran.
+        val started = startInForeground()
+        if (pendingStarts.get() > 0) pendingStarts.decrementAndGet()
+
+        // stopSelf(startId) keeps the service if a newer start is already queued.
+        if (!started || !store.isActive || !store.shouldRun) {
+            stopSelf(startId)
             return START_NOT_STICKY
         }
 
-        if (!store.isActive || !store.hasTargets) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
-
-        // Pick up configuration changes (packages added/removed) and re-evaluate now.
+        // Pick up configuration changes (packages, schedules) and re-evaluate now.
+        schedules = store.schedules
         protectedPackages = resolveProtectedPackages()
         blockAllExemptPackages = resolveBlockAllExemptPackages()
         candidateCache.clear()
@@ -109,11 +113,14 @@ class BlockAppService : Service() {
         super.onDestroy()
     }
 
-    /** Returns false when the loop should stop. */
-    private fun tick(): Boolean {
-        if (!store.isActive || !store.hasTargets) {
-            stopSelf()
-            return false
+    /** Returns the delay until the next tick, or null when the loop should stop. */
+    private fun tick(): Long? {
+        val now = System.currentTimeMillis()
+        pruneExpired(this, store, now)
+
+        if (!store.isActive || !store.shouldRun) {
+            stopUnlessStarting()
+            return null
         }
 
         if (!hasOverlayPermission(this) || !hasUsageStatsPermission(this)) {
@@ -123,22 +130,40 @@ class BlockAppService : Service() {
                 "android_blocking_stopped",
                 mapOf("reason" to "permission_revoked"),
             )
-            stopSelf()
-            return false
+            stopUnlessStarting()
+            return null
+        }
+
+        val (day, minute) = localDayAndMinute(now)
+        val targets = BlockTargets.resolve(
+            store.blockAll,
+            store.blockedPackages,
+            store.allowedPackages,
+            schedules,
+            day,
+            minute,
+        )
+        reportScheduleChanges(targets.activeScheduleIds)
+
+        // Only schedules outside their window: nothing to cover, check again later.
+        if (!targets.isBlocking) {
+            currentBlockedPackage = null
+            hideOverlay()
+            return IDLE_POLL_INTERVAL_MS
         }
 
         if (isDeviceLocked()) {
             hideOverlay()
-            return true
+            return POLL_INTERVAL_MS
         }
 
-        val foregroundPackage = tracker.update(System.currentTimeMillis())
+        val foregroundPackage = tracker.update(now)
         val block = foregroundPackage != null && BlockPolicy.shouldBlock(
             packageName = foregroundPackage,
             protectedPackages = protectedPackages,
-            blockAll = store.blockAll,
-            blockedPackages = store.blockedPackages,
-            allowedPackages = store.allowedPackages,
+            blockAll = targets.blockAll,
+            blockedPackages = targets.blockedPackages,
+            allowedPackages = targets.allowedPackages,
             isBlockAllCandidate = ::isBlockAllCandidate,
         )
         if (block) {
@@ -157,7 +182,22 @@ class BlockAppService : Service() {
             currentBlockedPackage = null
             hideOverlay()
         }
-        return true
+        return POLL_INTERVAL_MS
+    }
+
+    /** A queued start must still reach onStartCommand, which then decides. */
+    private fun stopUnlessStarting() {
+        if (pendingStarts.get() == 0) stopSelf()
+    }
+
+    private fun reportScheduleChanges(active: Set<String>) {
+        (active - activeScheduleIds).forEach {
+            PluginEvents.emit("android_schedule_started", mapOf("id" to it))
+        }
+        (activeScheduleIds - active).forEach {
+            PluginEvents.emit("android_schedule_ended", mapOf("id" to it))
+        }
+        activeScheduleIds = active
     }
 
     /**
@@ -354,19 +394,53 @@ class BlockAppService : Service() {
     companion object {
         private const val TAG = "BlockAppService"
         private const val POLL_INTERVAL_MS = 500L
+        private const val IDLE_POLL_INTERVAL_MS = 10_000L
         private const val HOME_RELAUNCH_INTERVAL_MS = 1_500L
         private const val SYSTEM_UI_PACKAGE = "com.android.systemui"
 
+        /**
+         * Ends timed blocks that are over, unsuspends their packages in enterprise
+         * mode and reports them as `android_block_expired` events.
+         */
+        internal fun pruneExpired(context: Context, store: BlockingStore, nowMs: Long) {
+            val expired = store.pruneExpired(nowMs)
+            if (expired.isEmpty) return
+            if (Enterprise.isModeEnabled(context, store)) {
+                Enterprise.setPackagesSuspended(context, expired.packages.toList(), false)
+            }
+            expired.packages.forEach {
+                PluginEvents.emit("android_block_expired", mapOf("packageName" to it))
+            }
+            if (expired.blockAll) {
+                PluginEvents.emit("android_block_expired", mapOf("allApps" to true))
+            }
+        }
+
+        /**
+         * Starts not yet delivered to onStartCommand. Stopping the service in
+         * that window makes Android crash the app with
+         * ForegroundServiceDidNotStartInTimeException, so [stop] defers to
+         * onStartCommand, which stops the service itself after startForeground().
+         */
+        private val pendingStarts = AtomicInteger(0)
+
         fun start(context: Context) {
             val intent = Intent(context, BlockAppService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            pendingStarts.incrementAndGet()
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {
+                pendingStarts.decrementAndGet()
+                throw e
             }
         }
 
         fun stop(context: Context) {
+            if (pendingStarts.get() > 0) return
             context.stopService(Intent(context, BlockAppService::class.java))
         }
 

@@ -129,6 +129,18 @@ class MethodChannelAppLimiter extends AppLimiterPlatform {
       allowedPackages: List<String>.from(
         map['allowedPackages'] as List? ?? const [],
       ),
+      blockedUntil: {
+        for (final entry in (map['blockedUntil'] as Map? ?? const {}).entries)
+          entry.key as String: DateTime.fromMillisecondsSinceEpoch(
+            entry.value as int,
+          ),
+      },
+      blockAllUntil: map['blockAllUntil'] == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(map['blockAllUntil'] as int),
+      activeScheduleIds: List<String>.from(
+        map['activeScheduleIds'] as List? ?? const [],
+      ),
       iosSelectedApplicationCount: map['applicationCount'] as int? ?? 0,
       iosSelectedCategoryCount: map['categoryCount'] as int? ?? 0,
       iosSelectedWebDomainCount: map['webDomainCount'] as int? ?? 0,
@@ -152,16 +164,43 @@ class MethodChannelAppLimiter extends AppLimiterPlatform {
   // Android
 
   @override
-  Future<void> androidBlockApps(List<String> packageNames) =>
-      _invoke<void>('blockApps', {'packageNames': packageNames});
+  Future<void> androidBlockApps(
+    List<String> packageNames, {
+    Duration? duration,
+  }) => _invoke<void>('blockApps', {
+    'packageNames': packageNames,
+    'durationMs': duration?.inMilliseconds,
+  });
 
   @override
   Future<void> androidUnblockApps(List<String> packageNames) =>
       _invoke<void>('unblockApps', {'packageNames': packageNames});
 
   @override
-  Future<void> androidBlockAllApps({List<String> except = const []}) =>
-      _invoke<void>('blockAllApps', {'except': except});
+  Future<void> androidBlockAllApps({
+    List<String> except = const [],
+    Duration? duration,
+  }) => _invoke<void>('blockAllApps', {
+    'except': except,
+    'durationMs': duration?.inMilliseconds,
+  });
+
+  @override
+  Future<void> androidSetSchedule(BlockSchedule schedule) =>
+      _invoke<void>('setSchedule', schedule.toMap());
+
+  @override
+  Future<void> androidRemoveSchedule(String id) =>
+      _invoke<void>('removeSchedule', {'id': id});
+
+  @override
+  Future<List<BlockSchedule>> androidGetSchedules() async {
+    final schedules = await _invoke<List<dynamic>>('getSchedules');
+    return (schedules ?? const [])
+        .whereType<Map>()
+        .map((schedule) => BlockSchedule.fromMap(_stringKeyed(schedule)))
+        .toList();
+  }
 
   @override
   Future<void> androidSetBlockScreen(BlockScreenConfig config) =>

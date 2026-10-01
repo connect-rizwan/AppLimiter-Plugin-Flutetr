@@ -13,6 +13,15 @@ void _requirePlatform(TargetPlatform platform, String api) {
   }
 }
 
+void _validateDuration(Duration? duration) {
+  if (duration != null && duration <= Duration.zero) {
+    throw const AppLimiterException(
+      AppLimiterErrorCode.invalidArgument,
+      'duration must be positive.',
+    );
+  }
+}
+
 List<String> _validPackageNames(Iterable<String> packageNames) {
   final trimmed = packageNames.map((name) => name.trim()).toList();
   if (trimmed.any((name) => name.isEmpty)) {
@@ -36,16 +45,27 @@ class AndroidAppLimiter {
 
   /// Blocks [packageName], e.g. `com.google.android.youtube`.
   ///
+  /// With a [duration] the block ends on its own, even while your app is
+  /// closed; without one it lasts until [unblockApp]. Blocking an already
+  /// blocked package replaces its end time.
+  ///
   /// Throws [AppLimiterErrorCode.permissionDenied] if a required permission
-  /// is missing and [AppLimiterErrorCode.invalidArgument] if the name is empty.
-  Future<void> blockApp(String packageName) => blockApps([packageName]);
+  /// is missing and [AppLimiterErrorCode.invalidArgument] if the name is empty
+  /// or the duration is not positive.
+  Future<void> blockApp(String packageName, {Duration? duration}) =>
+      blockApps([packageName], duration: duration);
 
   /// Blocks every package in [packageNames]. Already blocked ones are kept.
-  Future<void> blockApps(List<String> packageNames) async {
+  /// See [blockApp] for [duration].
+  Future<void> blockApps(
+    List<String> packageNames, {
+    Duration? duration,
+  }) async {
     _requireAndroid('blockApps');
+    _validateDuration(duration);
     final names = _validPackageNames(packageNames);
     if (names.isEmpty) return;
-    await _platform.androidBlockApps(names);
+    await _platform.androidBlockApps(names, duration: duration);
   }
 
   /// Unblocks [packageName]. Other blocked apps stay blocked.
@@ -65,10 +85,55 @@ class AndroidAppLimiter {
   /// The host app, the home launcher, the phone dialer and Settings always
   /// stay usable. Apps blocked with [blockApp] stay blocked even if listed in
   /// [except]. Calling it again replaces the previous [except] list.
-  /// Undo with `AppLimiter.unblockAll()`.
-  Future<void> blockAllApps({List<String> except = const []}) {
+  /// With a [duration] it ends on its own; otherwise undo it with
+  /// `AppLimiter.unblockAll()`.
+  Future<void> blockAllApps({
+    List<String> except = const [],
+    Duration? duration,
+  }) {
     _requireAndroid('blockAllApps');
-    return _platform.androidBlockAllApps(except: _validPackageNames(except));
+    _validateDuration(duration);
+    return _platform.androidBlockAllApps(
+      except: _validPackageNames(except),
+      duration: duration,
+    );
+  }
+
+  /// Adds [schedule], or replaces the schedule with the same id.
+  ///
+  /// Schedules are enforced on the device, including after a reboot, until
+  /// removed with [removeSchedule]. `AppLimiter.unblockAll()` does not remove
+  /// them. Throws [AppLimiterErrorCode.permissionDenied] if a required
+  /// permission is missing.
+  Future<void> setSchedule(BlockSchedule schedule) {
+    _requireAndroid('setSchedule');
+    _validPackageNames([...schedule.packages, ...schedule.except]);
+    final error = switch (schedule) {
+      _ when schedule.id.trim().isEmpty => 'id must not be empty.',
+      _ when !schedule.allApps && schedule.packages.isEmpty =>
+        'Set packages or allApps.',
+      _
+          when schedule.weekdays.isEmpty ||
+              schedule.weekdays.any((day) => day < 1 || day > 7) =>
+        'weekdays must use DateTime.monday (1) to DateTime.sunday (7).',
+      _ => null,
+    };
+    if (error != null) {
+      throw AppLimiterException(AppLimiterErrorCode.invalidArgument, error);
+    }
+    return _platform.androidSetSchedule(schedule);
+  }
+
+  /// Removes the schedule with [id]. Does nothing if it does not exist.
+  Future<void> removeSchedule(String id) {
+    _requireAndroid('removeSchedule');
+    return _platform.androidRemoveSchedule(id);
+  }
+
+  /// All schedules, sorted by id.
+  Future<List<BlockSchedule>> getSchedules() {
+    _requireAndroid('getSchedules');
+    return _platform.androidGetSchedules();
   }
 
   /// Customizes the block screen shown over blocked apps.

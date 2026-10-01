@@ -88,6 +88,9 @@ class BlockingState {
     this.blockAll = false,
     this.blockedPackages = const <String>[],
     this.allowedPackages = const <String>[],
+    this.blockedUntil = const <String, DateTime>{},
+    this.blockAllUntil,
+    this.activeScheduleIds = const <String>[],
     this.iosSelectedApplicationCount = 0,
     this.iosSelectedCategoryCount = 0,
     this.iosSelectedWebDomainCount = 0,
@@ -104,6 +107,16 @@ class BlockingState {
 
   /// Android: packages left usable while [blockAll] is on.
   final List<String> allowedPackages;
+
+  /// Android: end time of each timed package block. Packages without an entry
+  /// stay blocked until unblocked.
+  final Map<String, DateTime> blockedUntil;
+
+  /// Android: end time of a timed [blockAll], or null when it has no end.
+  final DateTime? blockAllUntil;
+
+  /// Android: ids of schedules whose window is active right now.
+  final List<String> activeScheduleIds;
 
   /// iOS: number of apps in the saved picker selection.
   final int iosSelectedApplicationCount;
@@ -128,6 +141,9 @@ class BlockingState {
       other.blockAll == blockAll &&
       listEquals(other.blockedPackages, blockedPackages) &&
       listEquals(other.allowedPackages, allowedPackages) &&
+      mapEquals(other.blockedUntil, blockedUntil) &&
+      other.blockAllUntil == blockAllUntil &&
+      listEquals(other.activeScheduleIds, activeScheduleIds) &&
       other.iosSelectedApplicationCount == iosSelectedApplicationCount &&
       other.iosSelectedCategoryCount == iosSelectedCategoryCount &&
       other.iosSelectedWebDomainCount == iosSelectedWebDomainCount;
@@ -138,6 +154,11 @@ class BlockingState {
     blockAll,
     Object.hashAll(blockedPackages),
     Object.hashAll(allowedPackages),
+    Object.hashAllUnordered(
+      blockedUntil.entries.map((e) => Object.hash(e.key, e.value)),
+    ),
+    blockAllUntil,
+    Object.hashAll(activeScheduleIds),
     iosSelectedApplicationCount,
     iosSelectedCategoryCount,
     iosSelectedWebDomainCount,
@@ -147,6 +168,8 @@ class BlockingState {
   String toString() =>
       'BlockingState(isActive: $isActive, blockAll: $blockAll, '
       'blockedPackages: $blockedPackages, allowedPackages: $allowedPackages, '
+      'blockedUntil: $blockedUntil, blockAllUntil: $blockAllUntil, '
+      'activeScheduleIds: $activeScheduleIds, '
       'iosSelection: '
       '$iosSelectedApplicationCount apps / $iosSelectedCategoryCount categories / '
       '$iosSelectedWebDomainCount domains)';
@@ -287,6 +310,16 @@ enum AppLimiterEventType {
   /// iOS picker was shown.
   pickerPresented,
 
+  /// Android: a timed block ended. `payload['packageName']` is the app, or
+  /// `payload['allApps']` is true when a timed block-all ended.
+  blockExpired,
+
+  /// Android: a schedule's window started. `payload['id']` is the schedule.
+  scheduleStarted,
+
+  /// Android: a schedule's window ended. `payload['id']` is the schedule.
+  scheduleEnded,
+
   /// Android: the user opened a blocked app and the block screen was shown.
   /// `payload['packageName']` is the app. Only delivered while your app's
   /// Flutter engine is running.
@@ -316,6 +349,9 @@ class AppLimiterEvent {
     'ios_schedule_configured': AppLimiterEventType.scheduleChanged,
     'ios_picker_presented': AppLimiterEventType.pickerPresented,
     'android_blocked_app_opened': AppLimiterEventType.blockedAppOpened,
+    'android_block_expired': AppLimiterEventType.blockExpired,
+    'android_schedule_started': AppLimiterEventType.scheduleStarted,
+    'android_schedule_ended': AppLimiterEventType.scheduleEnded,
   };
 
   /// Raw native event name, e.g. `android_blocking_state_changed`.
@@ -416,4 +452,141 @@ class BlockScreenConfig {
     'buttonLabel': buttonLabel,
     'buttonAction': buttonAction.name,
   };
+}
+
+/// A time of day, in the device's local time zone.
+@immutable
+class DailyTime {
+  const DailyTime(this.hour, [this.minute = 0])
+    : assert(hour >= 0 && hour < 24),
+      assert(minute >= 0 && minute < 60);
+
+  /// Parses a minute of the day (0-1439).
+  const DailyTime.fromMinuteOfDay(int minuteOfDay)
+    : this(minuteOfDay ~/ 60, minuteOfDay % 60);
+
+  final int hour;
+  final int minute;
+
+  int get minuteOfDay => hour * 60 + minute;
+
+  @override
+  bool operator ==(Object other) =>
+      other is DailyTime && other.hour == hour && other.minute == minute;
+
+  @override
+  int get hashCode => Object.hash(hour, minute);
+
+  @override
+  String toString() =>
+      '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
+}
+
+/// A recurring Android block window, enforced on the device even while your
+/// app is closed.
+///
+/// When [end] is not after [start] the window runs overnight, e.g. 22:00 to
+/// 07:00; [weekdays] then refers to the day the window starts. Equal [start]
+/// and [end] block the whole day.
+@immutable
+class BlockSchedule {
+  const BlockSchedule({
+    required this.id,
+    this.packages = const <String>[],
+    this.allApps = false,
+    this.except = const <String>[],
+    required this.start,
+    required this.end,
+    this.weekdays = allWeekdays,
+  });
+
+  /// Every day of the week.
+  static const Set<int> allWeekdays = {1, 2, 3, 4, 5, 6, 7};
+
+  /// Monday to Friday.
+  static const Set<int> workdays = {1, 2, 3, 4, 5};
+
+  /// Identifies the schedule; setting a schedule with an existing id replaces it.
+  final String id;
+
+  /// Packages blocked during the window.
+  final List<String> packages;
+
+  /// Blocks every app with a launcher icon during the window, except [except].
+  final bool allApps;
+
+  /// Packages kept usable when [allApps] is true.
+  final List<String> except;
+
+  final DailyTime start;
+  final DailyTime end;
+
+  /// Days the window starts on: `DateTime.monday` (1) to `DateTime.sunday` (7).
+  final Set<int> weekdays;
+
+  /// Whether the window is active at [time] (local time).
+  bool isActiveAt(DateTime time) {
+    final minute = time.hour * 60 + time.minute;
+    final day = time.weekday;
+    final previousDay = day == DateTime.monday ? DateTime.sunday : day - 1;
+    final startMinute = start.minuteOfDay;
+    final endMinute = end.minuteOfDay;
+    if (startMinute == endMinute) return weekdays.contains(day);
+    if (startMinute < endMinute) {
+      return weekdays.contains(day) &&
+          minute >= startMinute &&
+          minute < endMinute;
+    }
+    return (weekdays.contains(day) && minute >= startMinute) ||
+        (weekdays.contains(previousDay) && minute < endMinute);
+  }
+
+  Map<String, dynamic> toMap() => <String, dynamic>{
+    'id': id,
+    'packages': packages,
+    'allApps': allApps,
+    'except': except,
+    'startMinute': start.minuteOfDay,
+    'endMinute': end.minuteOfDay,
+    'weekdays': (weekdays.toList()..sort()),
+  };
+
+  factory BlockSchedule.fromMap(Map<String, dynamic> map) {
+    return BlockSchedule(
+      id: map['id'] as String,
+      packages: List<String>.from(map['packages'] as List? ?? const []),
+      allApps: map['allApps'] as bool? ?? false,
+      except: List<String>.from(map['except'] as List? ?? const []),
+      start: DailyTime.fromMinuteOfDay(map['startMinute'] as int),
+      end: DailyTime.fromMinuteOfDay(map['endMinute'] as int),
+      weekdays: Set<int>.from(map['weekdays'] as List? ?? allWeekdays),
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is BlockSchedule &&
+      other.id == id &&
+      listEquals(other.packages, packages) &&
+      other.allApps == allApps &&
+      listEquals(other.except, except) &&
+      other.start == start &&
+      other.end == end &&
+      setEquals(other.weekdays, weekdays);
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    Object.hashAll(packages),
+    allApps,
+    Object.hashAll(except),
+    start,
+    end,
+    Object.hashAllUnordered(weekdays),
+  );
+
+  @override
+  String toString() =>
+      'BlockSchedule($id, $start-$end, weekdays: $weekdays, '
+      '${allApps ? 'all apps except $except' : packages})';
 }

@@ -7,6 +7,7 @@ A Flutter plugin to block apps and limit screen time on Android and iOS.
 - ✅ One typed API for permissions, blocking state and events on both platforms
 - ✅ Android: block individual apps or every app (with an allowlist), list installed apps with icons
 - ✅ Android: customizable block screen and notification, "blocked app opened" events
+- ✅ Android: timed blocks and recurring schedules, enforced even while your app is closed
 - ✅ iOS: pick, block and unblock apps, categories and websites (Screen Time API)
 - ✅ Blocking survives reboots and app updates on Android
 - ✅ Typed errors (`AppLimiterException` with an `AppLimiterErrorCode`)
@@ -66,11 +67,14 @@ Stream<AppLimiterEvent> events
 ### Android (`limiter.android`)
 
 ```dart
-Future<void> blockApp(String packageName)
-Future<void> blockApps(List<String> packageNames)
+Future<void> blockApp(String packageName, {Duration? duration})
+Future<void> blockApps(List<String> packageNames, {Duration? duration})
 Future<void> unblockApp(String packageName)
 Future<void> unblockApps(List<String> packageNames)
-Future<void> blockAllApps({List<String> except = const []})
+Future<void> blockAllApps({List<String> except = const [], Duration? duration})
+Future<void> setSchedule(BlockSchedule schedule)
+Future<void> removeSchedule(String id)
+Future<List<BlockSchedule>> getSchedules()
 Future<void> setBlockScreen(BlockScreenConfig config)
 Future<void> setNotification({String? title, String? text})
 Future<List<InstalledApp>> getInstalledApps({bool includeIcons = false, bool includeSystemApps = true, int iconSize = 96})
@@ -81,6 +85,38 @@ Future<bool> isEnterpriseModeEnabled()
 
 `InstalledApp` has `packageName`, `name`, `isSystemApp`, `category` and, when
 requested, a PNG `icon` (`Image.memory(app.icon!)`).
+
+#### Timed blocks and schedules
+
+```dart
+// Ends on its own after 30 minutes, even if your app is closed.
+await limiter.android.blockApp('com.instagram.android', duration: const Duration(minutes: 30));
+
+// Every weekday night from 22:00 to 07:00.
+await limiter.android.setSchedule(
+  const BlockSchedule(
+    id: 'bedtime',
+    allApps: true,
+    except: ['com.whatsapp'],
+    start: DailyTime(22),
+    end: DailyTime(7),
+    weekdays: BlockSchedule.workdays, // starting days; DateTime.monday..sunday
+  ),
+);
+```
+
+- A window whose end is not after its start runs overnight; equal start and end
+  block the whole day. Times use the device's time zone.
+- Setting a schedule with an existing `id` replaces it. Schedules survive reboots
+  and are not removed by `unblockAll()`; use `removeSchedule`.
+- `getBlockingState()` reports `blockedUntil`, `blockAllUntil` and the
+  `activeScheduleIds`, and `isActive` is true while any block applies right now.
+- Blocks start and end within about 10 seconds of the set time while the
+  screen is on; with the screen off they are applied on the next unlock.
+- The blocking service (and its notification) keeps running while any
+  schedule exists, so it can start blocking on time.
+- Enterprise mode suspends manually blocked packages only; schedules use the
+  block screen.
 
 #### Block screen
 
@@ -144,7 +180,9 @@ Every failure is an `AppLimiterException`:
 `scheduleChanged`, `pickerPresented`), a `payload` map and a `timestamp`.
 
 `blockedAppOpened` (Android) fires each time the user opens a blocked app, with
-`payload['packageName']`. Events are only delivered while your app's Flutter
+`payload['packageName']`. `blockExpired` fires when a timed block ends, and
+`scheduleStarted` / `scheduleEnded` (with `payload['id']`) when a schedule
+window opens or closes. Events are only delivered while your app's Flutter
 engine is running.
 
 ## 🪪 Setup

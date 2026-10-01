@@ -17,7 +17,8 @@ class BootReceiver : BroadcastReceiver() {
         }
 
         val store = BlockingStore(context)
-        if (!store.isActive || !store.hasTargets) {
+        BlockAppService.pruneExpired(context, store, System.currentTimeMillis())
+        if (!store.isActive || !store.shouldRun) {
             return
         }
         if (!BlockAppService.hasOverlayPermission(context) ||

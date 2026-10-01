@@ -2,9 +2,7 @@ package io.github.connectrizwan.app_limiter
 
 import android.Manifest
 import android.app.Activity
-import android.app.admin.DevicePolicyManager
 import android.content.ActivityNotFoundException
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -60,42 +58,12 @@ class AppLimiterPlugin :
     /** Flutter call waiting for the user to return from a permission screen. */
     private var pendingPermissionResult: Result? = null
 
-    private fun getDevicePolicyManager(): DevicePolicyManager {
-        return context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-    }
+    private fun isEnterpriseCapable(): Boolean = Enterprise.isCapable(context)
 
-    private fun getAdminComponent(): ComponentName {
-        return ComponentName(context, EnterpriseAdminReceiver::class.java)
-    }
+    private fun isEnterpriseModeEnabled(): Boolean = Enterprise.isModeEnabled(context, store)
 
-    private fun isEnterpriseCapable(): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
-            return false
-        }
-        return getDevicePolicyManager().isDeviceOwnerApp(context.packageName)
-    }
-
-    private fun isEnterpriseModeEnabled(): Boolean {
-        return store.enterpriseModeEnabled && isEnterpriseCapable()
-    }
-
-    /** Returns the packages that could not be (un)suspended. */
     private fun setPackagesSuspended(packageNames: List<String>, suspended: Boolean): Set<String> {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
-            return packageNames.toSet()
-        }
-
-        return try {
-            getDevicePolicyManager().setPackagesSuspended(
-                getAdminComponent(),
-                packageNames.toTypedArray(),
-                suspended,
-            ).toSet()
-        } catch (e: SecurityException) {
-            packageNames.toSet()
-        } catch (e: IllegalArgumentException) {
-            packageNames.toSet()
-        }
+        return Enterprise.setPackagesSuspended(context, packageNames, suspended)
     }
 
     /**
@@ -226,18 +194,24 @@ class AppLimiterPlugin :
         return true
     }
 
-    private fun blockingState(): Map<String, Any> {
+    private fun blockingState(): Map<String, Any?> {
+        val now = System.currentTimeMillis()
+        BlockAppService.pruneExpired(context, store, now)
+        val targets = store.targets(now)
         return mapOf(
-            "active" to (store.isActive && store.hasTargets),
+            "active" to (store.isActive && targets.isBlocking),
             "blockAll" to store.blockAll,
             "blockedPackages" to store.blockedPackages.sorted(),
             "allowedPackages" to store.allowedPackages.sorted(),
+            "blockedUntil" to store.blockedUntil,
+            "blockAllUntil" to store.blockAllUntil,
+            "activeScheduleIds" to targets.activeScheduleIds.sorted(),
         )
     }
 
     /** Starts or refreshes the blocking service, or stops it when nothing is left to block. */
     private fun syncService() {
-        store.isActive = store.hasTargets
+        store.isActive = store.shouldRun
         // In enterprise mode without overlay access, suspension alone does the blocking.
         if (store.isActive && hasRequiredPermissions()) {
             BlockAppService.start(context)
@@ -258,6 +232,11 @@ class AppLimiterPlugin :
             null,
         )
         return false
+    }
+
+    /** Optional positive duration in milliseconds; null means no end time. */
+    private fun durationArgument(call: MethodCall): Long? {
+        return (call.argument<Any>("durationMs") as? Number)?.toLong()?.takeIf { it > 0 }
     }
 
     private fun packageNamesArgument(call: MethodCall, result: Result): List<String>? {
@@ -330,6 +309,8 @@ class AppLimiterPlugin :
                     }
                 }
 
+                val until = durationArgument(call)?.let { System.currentTimeMillis() + it }
+                packageNames.forEach { store.setPackageExpiry(it, until) }
                 store.setBlockedPackages(store.blockedPackages + packageNames)
                 syncService()
                 result.success(null)
@@ -344,7 +325,9 @@ class AppLimiterPlugin :
                     emptySet()
                 }
 
-                store.setBlockedPackages(store.blockedPackages - (packageNames.toSet() - failed))
+                val unblocked = packageNames.toSet() - failed
+                unblocked.forEach { store.setPackageExpiry(it, null) }
+                store.setBlockedPackages(store.blockedPackages - unblocked)
                 syncService()
 
                 if (failed.isNotEmpty()) {
@@ -365,6 +348,7 @@ class AppLimiterPlugin :
                     ?.filter { it.isNotEmpty() }
                     .orEmpty()
                 store.setAllowedPackages(except.toSet())
+                store.blockAllUntil = durationArgument(call)?.let { System.currentTimeMillis() + it }
                 store.blockAll = true
                 syncService()
                 result.success(null)
@@ -379,6 +363,7 @@ class AppLimiterPlugin :
 
                 store.blockAll = false
                 store.setAllowedPackages(emptySet())
+                store.clearExpiries()
                 store.setBlockedPackages(stillSuspended)
                 syncService()
 
@@ -391,6 +376,28 @@ class AppLimiterPlugin :
                 } else {
                     result.success(null)
                 }
+            }
+
+            "setSchedule" -> {
+                val schedule = (call.arguments as? Map<*, *>)?.let { BlockSchedule.fromMap(it) }
+                if (schedule == null) {
+                    result.error("INVALID_ARGUMENT", "Invalid schedule.", null)
+                    return
+                }
+                if (!ensureCanBlock(result, allowEnterprise = false)) return
+                store.putSchedule(schedule)
+                syncService()
+                result.success(null)
+            }
+
+            "removeSchedule" -> {
+                call.argument<String>("id")?.let { store.removeSchedule(it) }
+                syncService()
+                result.success(null)
+            }
+
+            "getSchedules" -> {
+                result.success(store.schedules.map { it.toMap() })
             }
 
             "getInstalledApps" -> {

@@ -169,11 +169,13 @@ void main() {
       ]);
       expect(calls[0].arguments, {
         'packageNames': ['a.b', 'c.d'],
+        'durationMs': null,
       });
       expect(calls[1].arguments, {
         'packageNames': ['a.b'],
       });
-      expect(calls[2].arguments, {'except': <String>[]});
+      expect(calls[0].arguments['durationMs'], isNull);
+      expect(calls[2].arguments, {'except': <String>[], 'durationMs': null});
     });
 
     test('blockAllApps sends the allowlist', () async {
@@ -181,7 +183,78 @@ void main() {
       await platform.androidBlockAllApps(except: ['com.whatsapp']);
       expect(calls.single.arguments, {
         'except': ['com.whatsapp'],
+        'durationMs': null,
       });
+    });
+
+    test('durations are sent in milliseconds', () async {
+      responses['blockApps'] = (_) => null;
+      responses['blockAllApps'] = (_) => null;
+      await platform.androidBlockApps([
+        'a.b',
+      ], duration: const Duration(minutes: 30));
+      await platform.androidBlockAllApps(duration: const Duration(seconds: 90));
+      expect(calls[0].arguments['durationMs'], 30 * 60 * 1000);
+      expect(calls[1].arguments['durationMs'], 90 * 1000);
+    });
+
+    test('getBlockingState parses timed blocks and active schedules', () async {
+      responses['getBlockingState'] = (_) => {
+        'active': true,
+        'blockedPackages': ['a.b'],
+        'blockedUntil': {'a.b': 1700000000000},
+        'blockAllUntil': 1700000600000,
+        'activeScheduleIds': ['night'],
+      };
+      final state = await platform.getBlockingState();
+      expect(state.blockedUntil, {
+        'a.b': DateTime.fromMillisecondsSinceEpoch(1700000000000),
+      });
+      expect(
+        state.blockAllUntil,
+        DateTime.fromMillisecondsSinceEpoch(1700000600000),
+      );
+      expect(state.activeScheduleIds, ['night']);
+    });
+
+    test('schedule methods', () async {
+      responses['setSchedule'] = (_) => null;
+      responses['removeSchedule'] = (_) => null;
+      responses['getSchedules'] = (_) => [
+        {
+          'id': 'night',
+          'packages': <String>[],
+          'allApps': true,
+          'except': ['com.maps'],
+          'startMinute': 22 * 60,
+          'endMinute': 7 * 60 + 30,
+          'weekdays': [1, 2, 3, 4, 5],
+        },
+      ];
+
+      const schedule = BlockSchedule(
+        id: 'night',
+        allApps: true,
+        except: ['com.maps'],
+        start: DailyTime(22),
+        end: DailyTime(7, 30),
+        weekdays: BlockSchedule.workdays,
+      );
+      await platform.androidSetSchedule(schedule);
+      await platform.androidRemoveSchedule('night');
+      final schedules = await platform.androidGetSchedules();
+
+      expect(calls[0].arguments, {
+        'id': 'night',
+        'packages': <String>[],
+        'allApps': true,
+        'except': ['com.maps'],
+        'startMinute': 1320,
+        'endMinute': 450,
+        'weekdays': [1, 2, 3, 4, 5],
+      });
+      expect(calls[1].arguments, {'id': 'night'});
+      expect(schedules, [schedule]);
     });
 
     test('getBlockingState parses the allowlist', () async {
@@ -381,6 +454,11 @@ void main() {
               'name': 'android_blocked_app_opened',
               'payload': <Object?, Object?>{'packageName': 'com.game'},
             });
+            sink.success(<Object?, Object?>{'name': 'android_block_expired'});
+            sink.success(<Object?, Object?>{
+              'name': 'android_schedule_started',
+            });
+            sink.success(<Object?, Object?>{'name': 'android_schedule_ended'});
             sink.success(<Object?, Object?>{'name': 'something_new'});
             sink.success('not a map');
             sink.endOfStream();
@@ -390,7 +468,7 @@ void main() {
 
       final events = await platform.events.toList();
 
-      expect(events, hasLength(4));
+      expect(events, hasLength(7));
       expect(events[0].type, AppLimiterEventType.blockingStateChanged);
       expect(events[0].payload, {'active': true});
       expect(
@@ -399,9 +477,12 @@ void main() {
       );
       expect(events[1].type, AppLimiterEventType.blockedAppOpened);
       expect(events[1].payload['packageName'], 'com.game');
-      expect(events[2].type, AppLimiterEventType.unknown);
-      expect(events[2].name, 'something_new');
-      expect(events[3].payload, {'value': 'not a map'});
+      expect(events[2].type, AppLimiterEventType.blockExpired);
+      expect(events[3].type, AppLimiterEventType.scheduleStarted);
+      expect(events[4].type, AppLimiterEventType.scheduleEnded);
+      expect(events[5].type, AppLimiterEventType.unknown);
+      expect(events[5].name, 'something_new');
+      expect(events[6].payload, {'value': 'not a map'});
     });
 
     test('returns the same broadcast stream for every caller', () {

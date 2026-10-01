@@ -37,6 +37,7 @@ class _HomePageState extends State<HomePage> {
   BlockingState? _blocking;
   bool _enterpriseCapable = false;
   bool _enterpriseEnabled = false;
+  List<BlockSchedule> _schedules = const [];
   final List<AppLimiterEvent> _events = <AppLimiterEvent>[];
   bool _busy = false;
 
@@ -80,9 +81,11 @@ class _HomePageState extends State<HomePage> {
       final blocking = await _limiter.getBlockingState();
       var enterpriseCapable = false;
       var enterpriseEnabled = false;
+      var schedules = const <BlockSchedule>[];
       if (_isAndroid) {
         enterpriseCapable = await _limiter.android.isEnterpriseCapable();
         enterpriseEnabled = await _limiter.android.isEnterpriseModeEnabled();
+        schedules = await _limiter.android.getSchedules();
       }
       if (!mounted) return;
       setState(() {
@@ -90,6 +93,7 @@ class _HomePageState extends State<HomePage> {
         _blocking = blocking;
         _enterpriseCapable = enterpriseCapable;
         _enterpriseEnabled = enterpriseEnabled;
+        _schedules = schedules;
       });
     } on AppLimiterException catch (e) {
       _showSnackBar('Failed to load status: ${e.message}');
@@ -143,6 +147,47 @@ class _HomePageState extends State<HomePage> {
       await _limiter.android.unblockApps(toUnblock);
       return '${selected.length} blocked';
     });
+  }
+
+  Future<void> _blockForOneMinute() async {
+    final selected = await _pickApps('Block for 1 minute', <String>{});
+    if (selected == null || selected.isEmpty) return;
+    await _run(
+      'Block for 1 minute',
+      () => _limiter.android.blockApps(
+        selected.toList(),
+        duration: const Duration(minutes: 1),
+      ),
+    );
+  }
+
+  Future<void> _addSchedule() async {
+    final apps = await _pickApps('Apps to schedule', <String>{});
+    if (apps == null || apps.isEmpty || !mounted) return;
+    final start = await showTimePicker(
+      context: context,
+      helpText: 'Block from',
+      initialTime: const TimeOfDay(hour: 22, minute: 0),
+    );
+    if (start == null || !mounted) return;
+    final end = await showTimePicker(
+      context: context,
+      helpText: 'Block until',
+      initialTime: const TimeOfDay(hour: 7, minute: 0),
+    );
+    if (end == null) return;
+
+    await _run(
+      'Schedule',
+      () => _limiter.android.setSchedule(
+        BlockSchedule(
+          id: 'schedule-${DateTime.now().millisecondsSinceEpoch}',
+          packages: apps.toList(),
+          start: DailyTime(start.hour, start.minute),
+          end: DailyTime(end.hour, end.minute),
+        ),
+      ),
+    );
   }
 
   Future<void> _blockAllExcept() async {
@@ -270,6 +315,15 @@ class _HomePageState extends State<HomePage> {
             onPressed: _blockAllExcept,
             child: const Text('Block all except…'),
           ),
+          ElevatedButton(
+            onPressed: _blockForOneMinute,
+            child: const Text('Block for 1 minute…'),
+          ),
+          ElevatedButton(
+            key: const Key('addSchedule'),
+            onPressed: _addSchedule,
+            child: const Text('Add schedule…'),
+          ),
           OutlinedButton(
             key: const Key('customBlockScreen'),
             onPressed: () => _customizeBlockScreen(true),
@@ -281,6 +335,30 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
+      for (final schedule in _schedules)
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(
+            _blocking?.activeScheduleIds.contains(schedule.id) == true
+                ? Icons.lock_clock
+                : Icons.schedule,
+          ),
+          title: Text('${schedule.start} – ${schedule.end}'),
+          subtitle: Text(
+            schedule.allApps
+                ? 'All apps except ${schedule.except.length}'
+                : schedule.packages.join(', '),
+          ),
+          trailing: IconButton(
+            tooltip: 'Remove schedule',
+            icon: const Icon(Icons.delete_outline),
+            onPressed:
+                () => _run(
+                  'Remove schedule',
+                  () => _limiter.android.removeSchedule(schedule.id),
+                ),
+          ),
+        ),
       SwitchListTile.adaptive(
         contentPadding: EdgeInsets.zero,
         title: const Text('Enterprise mode (device owner only)'),

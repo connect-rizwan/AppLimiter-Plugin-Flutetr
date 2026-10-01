@@ -123,6 +123,117 @@ void main() {
       expect(stateEvents.last.payload['active'], isFalse);
     });
 
+    testWidgets('rapid block/unblock does not crash the app', (tester) async {
+      if (!(await limiter.getPermissionStatus()).isGranted) return;
+
+      // Stopping the service before it reached startForeground() used to
+      // crash the app with ForegroundServiceDidNotStartInTimeException.
+      for (var i = 0; i < 15; i++) {
+        await limiter.android.blockApp(target);
+        await limiter.unblockAll();
+        await limiter.android.blockAllApps();
+        await limiter.android.unblockApp(target);
+        await limiter.unblockAll();
+      }
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(seconds: 12)),
+      );
+
+      // Still alive and nothing left blocked.
+      expect(await limiter.getPlatformVersion(), isNotEmpty);
+      expect((await limiter.getBlockingState()).isActive, isFalse);
+    });
+
+    testWidgets('timed block ends on its own', (tester) async {
+      if (!(await limiter.getPermissionStatus()).isGranted) return;
+
+      final expired = <AppLimiterEvent>[];
+      final subscription = limiter.events
+          .where((e) => e.type == AppLimiterEventType.blockExpired)
+          .listen(expired.add);
+
+      await limiter.android.blockApp(
+        target,
+        duration: const Duration(seconds: 3),
+      );
+      var state = await limiter.getBlockingState();
+      expect(state.isActive, isTrue);
+      expect(state.blockedUntil[target]!.isAfter(DateTime.now()), isTrue);
+
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(seconds: 5)),
+      );
+      state = await limiter.getBlockingState();
+      expect(state.blockedPackages, isEmpty);
+      expect(state.blockedUntil, isEmpty);
+      expect(state.isActive, isFalse);
+
+      await tester.pump(const Duration(milliseconds: 500));
+      await subscription.cancel();
+      expect(expired.map((e) => e.payload['packageName']), contains(target));
+    });
+
+    testWidgets('schedule blocks only inside its window', (tester) async {
+      if (!(await limiter.getPermissionStatus()).isGranted) return;
+
+      final started = <AppLimiterEvent>[];
+      final subscription = limiter.events
+          .where((e) => e.type == AppLimiterEventType.scheduleStarted)
+          .listen(started.add);
+
+      final now = DateTime.now();
+      DailyTime minutesFromNow(int minutes) {
+        final time = now.add(Duration(minutes: minutes));
+        return DailyTime(time.hour, time.minute);
+      }
+
+      // Window covering now (wraps past midnight when needed).
+      await limiter.android.setSchedule(
+        BlockSchedule(
+          id: 'now',
+          packages: const [target],
+          start: minutesFromNow(-1),
+          end: minutesFromNow(3),
+        ),
+      );
+      // Window that is not active now.
+      await limiter.android.setSchedule(
+        BlockSchedule(
+          id: 'later',
+          packages: const ['com.google.android.youtube'],
+          start: minutesFromNow(120),
+          end: minutesFromNow(180),
+        ),
+      );
+
+      expect((await limiter.android.getSchedules()).map((s) => s.id), [
+        'later',
+        'now',
+      ]);
+      var state = await limiter.getBlockingState();
+      expect(state.isActive, isTrue);
+      expect(state.activeScheduleIds, ['now']);
+      expect(state.blockedPackages, isEmpty); // schedules are not manual blocks
+
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(seconds: 2)),
+      );
+      expect(started.map((e) => e.payload['id']), contains('now'));
+
+      // unblockAll keeps schedules.
+      await limiter.unblockAll();
+      expect((await limiter.getBlockingState()).activeScheduleIds, ['now']);
+
+      await limiter.android.removeSchedule('now');
+      state = await limiter.getBlockingState();
+      expect(state.isActive, isFalse);
+      expect(state.activeScheduleIds, isEmpty);
+
+      await limiter.android.removeSchedule('later');
+      expect(await limiter.android.getSchedules(), isEmpty);
+      await subscription.cancel();
+    });
+
     testWidgets('block all with an allowlist', (tester) async {
       if (!(await limiter.getPermissionStatus()).isGranted) return;
 

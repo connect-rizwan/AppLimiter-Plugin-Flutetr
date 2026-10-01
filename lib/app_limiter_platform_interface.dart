@@ -59,14 +59,27 @@ abstract class AppLimiterPlatform extends PlatformInterface {
 
   // Android
 
-  Future<void> androidBlockApps(List<String> packageNames) =>
-      throw _unimplemented('androidBlockApps');
+  Future<void> androidBlockApps(
+    List<String> packageNames, {
+    Duration? duration,
+  }) => throw _unimplemented('androidBlockApps');
 
   Future<void> androidUnblockApps(List<String> packageNames) =>
       throw _unimplemented('androidUnblockApps');
 
-  Future<void> androidBlockAllApps({List<String> except = const []}) =>
-      throw _unimplemented('androidBlockAllApps');
+  Future<void> androidBlockAllApps({
+    List<String> except = const [],
+    Duration? duration,
+  }) => throw _unimplemented('androidBlockAllApps');
+
+  Future<void> androidSetSchedule(BlockSchedule schedule) =>
+      throw _unimplemented('androidSetSchedule');
+
+  Future<void> androidRemoveSchedule(String id) =>
+      throw _unimplemented('androidRemoveSchedule');
+
+  Future<List<BlockSchedule>> androidGetSchedules() =>
+      throw _unimplemented('androidGetSchedules');
 
   Future<void> androidSetBlockScreen(BlockScreenConfig config) =>
       throw _unimplemented('androidSetBlockScreen');
