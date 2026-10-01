@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Default texts. Host apps can translate or override them by defining the same names. -->
+<resources>
+    <string name="app_limiter_block_title">Screen Time Blocked</string>
+    <string name="app_limiter_block_message">Take a break. Your focus matters.</string>
+    <string name="app_limiter_block_detail">This app is currently unavailable.</string>
+    <string name="app_limiter_notification_channel">App blocking</string>
+    <string name="app_limiter_notification_title">App blocking is active</string>
+    <string name="app_limiter_notification_text">Restricted apps are blocked.</string>
+</resources>

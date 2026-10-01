@@ -126,6 +126,9 @@ class MethodChannelAppLimiter extends AppLimiterPlatform {
       blockedPackages: List<String>.from(
         map['blockedPackages'] as List? ?? const [],
       ),
+      allowedPackages: List<String>.from(
+        map['allowedPackages'] as List? ?? const [],
+      ),
       iosSelectedApplicationCount: map['applicationCount'] as int? ?? 0,
       iosSelectedCategoryCount: map['categoryCount'] as int? ?? 0,
       iosSelectedWebDomainCount: map['webDomainCount'] as int? ?? 0,
@@ -157,7 +160,16 @@ class MethodChannelAppLimiter extends AppLimiterPlatform {
       _invoke<void>('unblockApps', {'packageNames': packageNames});
 
   @override
-  Future<void> androidBlockAllApps() => _invoke<void>('blockAllApps');
+  Future<void> androidBlockAllApps({List<String> except = const []}) =>
+      _invoke<void>('blockAllApps', {'except': except});
+
+  @override
+  Future<void> androidSetBlockScreen(BlockScreenConfig config) =>
+      _invoke<void>('setBlockScreen', config.toMap());
+
+  @override
+  Future<void> androidSetNotification({String? title, String? text}) =>
+      _invoke<void>('setNotification', {'title': title, 'text': text});
 
   @override
   Future<List<InstalledApp>> androidGetInstalledApps({

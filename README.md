@@ -5,7 +5,8 @@ A Flutter plugin to block apps and limit screen time on Android and iOS.
 ## 🧠 Features
 
 - ✅ One typed API for permissions, blocking state and events on both platforms
-- ✅ Android: block individual apps or every app, list installed apps with icons
+- ✅ Android: block individual apps or every app (with an allowlist), list installed apps with icons
+- ✅ Android: customizable block screen and notification, "blocked app opened" events
 - ✅ iOS: pick, block and unblock apps, categories and websites (Screen Time API)
 - ✅ Blocking survives reboots and app updates on Android
 - ✅ Typed errors (`AppLimiterException` with an `AppLimiterErrorCode`)
@@ -69,7 +70,9 @@ Future<void> blockApp(String packageName)
 Future<void> blockApps(List<String> packageNames)
 Future<void> unblockApp(String packageName)
 Future<void> unblockApps(List<String> packageNames)
-Future<void> blockAllApps()
+Future<void> blockAllApps({List<String> except = const []})
+Future<void> setBlockScreen(BlockScreenConfig config)
+Future<void> setNotification({String? title, String? text})
 Future<List<InstalledApp>> getInstalledApps({bool includeIcons = false, bool includeSystemApps = true, int iconSize = 96})
 Future<bool> isEnterpriseCapable()
 Future<void> setEnterpriseModeEnabled(bool enabled)
@@ -78,6 +81,29 @@ Future<bool> isEnterpriseModeEnabled()
 
 `InstalledApp` has `packageName`, `name`, `isSystemApp`, `category` and, when
 requested, a PNG `icon` (`Image.memory(app.icon!)`).
+
+#### Block screen
+
+```dart
+await limiter.android.setBlockScreen(
+  BlockScreenConfig(
+    title: 'Not now',
+    message: 'You chose to stay focused until 6 pm.',
+    backgroundColor: const Color(0xFF1A237E),
+    textColor: Colors.white,
+    icon: (await rootBundle.load('assets/logo.png')).buffer.asUint8List(),
+    buttonLabel: 'Open MyApp',
+    buttonAction: BlockScreenButtonAction.openHostApp, // or closeApp
+  ),
+);
+await limiter.android.setNotification(title: 'Focus mode on');
+```
+
+The configuration is saved on the device and used from the next time a blocked
+app opens. Unset fields keep the defaults; the default footer is your app's name.
+The default texts can also be translated by overriding the string resources
+`app_limiter_block_title`, `app_limiter_block_message`, `app_limiter_block_detail`,
+`app_limiter_notification_title` and `app_limiter_notification_text`.
 
 ### iOS (`limiter.ios`)
 
@@ -114,8 +140,12 @@ Every failure is an `AppLimiterException`:
 ### Events
 
 `events` emits `AppLimiterEvent`s with a `type` (`blockingStateChanged`,
-`blockingStopped`, `permissionChanged`, `selectionChanged`, `scheduleChanged`,
-`pickerPresented`), a `payload` map and a `timestamp`.
+`blockingStopped`, `blockedAppOpened`, `permissionChanged`, `selectionChanged`,
+`scheduleChanged`, `pickerPresented`), a `payload` map and a `timestamp`.
+
+`blockedAppOpened` (Android) fires each time the user opens a blocked app, with
+`payload['packageName']`. Events are only delivered while your app's Flutter
+engine is running.
 
 ## 🪪 Setup
 
@@ -136,7 +166,8 @@ Behaviour:
 
 - `blockAllApps()` blocks every app with a launcher icon, including preinstalled
   ones such as YouTube or Gmail, but keeps the phone dialer and Settings usable.
-  Block Settings explicitly with `blockApp` if needed.
+  Pass `except:` to keep more apps usable; apps blocked with `blockApp` stay
+  blocked even if listed. Block Settings explicitly with `blockApp` if needed.
 - The host app, the home launcher and System UI are never blocked.
 - Settings, the permission controller and the package installer hide third-party
   overlays. When they are blocked, the user is sent to the home screen instead.
@@ -150,6 +181,8 @@ Behaviour:
    [requested from Apple](https://developer.apple.com/contact/request/family-controls-distribution).
 3. Schedules set with `configureSchedule` only take effect if your app ships a
    `DeviceActivityMonitor` extension that applies shields on interval events.
+4. The iOS block screen (shield) uses Apple's default look. Customizing it needs a
+   `ShieldConfiguration` extension in your app; the plugin cannot do it for you.
 
 Both Swift Package Manager and CocoaPods are supported.
 

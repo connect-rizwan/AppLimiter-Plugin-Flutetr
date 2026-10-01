@@ -10,6 +10,7 @@ import android.content.SharedPreferences
  * - [isActive]: master switch; the blocking service runs only while this is true.
  * - [blockAll]: block every launchable user-installed app.
  * - [blockedPackages]: packages blocked individually.
+ * - [allowedPackages]: packages left usable while [blockAll] is on.
  */
 internal class BlockingStore(context: Context) {
     private val prefs: SharedPreferences =
@@ -36,6 +37,16 @@ internal class BlockingStore(context: Context) {
             .orEmpty()
             .filter { it.isNotBlank() }
             .toSet()
+
+    val allowedPackages: Set<String>
+        get() = prefs.getStringSet(KEY_ALLOWED_PACKAGES, emptySet())
+            .orEmpty()
+            .filter { it.isNotBlank() }
+            .toSet()
+
+    fun setAllowedPackages(packages: Set<String>) {
+        prefs.edit().putStringSet(KEY_ALLOWED_PACKAGES, packages).apply()
+    }
 
     /** True when there is at least one thing to block. */
     val hasTargets: Boolean
@@ -68,6 +79,7 @@ internal class BlockingStore(context: Context) {
         const val KEY_ACTIVE = "Blocking"
         const val KEY_BLOCK_ALL = "block_all"
         const val KEY_BLOCKED_PACKAGES = "blocked_packages"
+        const val KEY_ALLOWED_PACKAGES = "allowed_packages"
         const val KEY_ENTERPRISE_MODE = "enterprise_mode_enabled"
     }
 }

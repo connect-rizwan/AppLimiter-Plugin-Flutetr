@@ -61,6 +61,20 @@ void main() {
     );
   });
 
+  test('BlockScreenConfig defaults', () {
+    expect(const BlockScreenConfig().toMap(), {
+      'title': null,
+      'message': null,
+      'footer': null,
+      'backgroundColor': null,
+      'textColor': null,
+      'icon': null,
+      'showIcon': true,
+      'buttonLabel': null,
+      'buttonAction': 'closeApp',
+    });
+  });
+
   test('AppLimiterEvent.toMap round-trips', () {
     final event = AppLimiterEvent.fromMap({
       'name': 'ios_selection_updated',

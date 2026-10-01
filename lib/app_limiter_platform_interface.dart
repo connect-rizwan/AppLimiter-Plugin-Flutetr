@@ -65,8 +65,14 @@ abstract class AppLimiterPlatform extends PlatformInterface {
   Future<void> androidUnblockApps(List<String> packageNames) =>
       throw _unimplemented('androidUnblockApps');
 
-  Future<void> androidBlockAllApps() =>
+  Future<void> androidBlockAllApps({List<String> except = const []}) =>
       throw _unimplemented('androidBlockAllApps');
+
+  Future<void> androidSetBlockScreen(BlockScreenConfig config) =>
+      throw _unimplemented('androidSetBlockScreen');
+
+  Future<void> androidSetNotification({String? title, String? text}) =>
+      throw _unimplemented('androidSetNotification');
 
   Future<List<InstalledApp>> androidGetInstalledApps({
     bool includeIcons = false,

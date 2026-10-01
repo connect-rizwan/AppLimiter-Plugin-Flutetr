@@ -17,19 +17,22 @@ internal object BlockPolicy {
     /**
      * @param protectedPackages packages that must never be blocked (host app,
      *   home launcher, system UI) so the user can always get out.
-     * @param isBlockAllCandidate whether [packageName] is a launchable,
-     *   user-installed app; only consulted when [blockAll] is true.
+     * @param allowedPackages packages kept usable during block-all. An explicit
+     *   entry in [blockedPackages] still wins.
+     * @param isBlockAllCandidate whether [packageName] is a launchable app that
+     *   block-all applies to; only consulted when [blockAll] is true.
      */
     fun shouldBlock(
         packageName: String,
         protectedPackages: Set<String>,
         blockAll: Boolean,
         blockedPackages: Set<String>,
+        allowedPackages: Set<String> = emptySet(),
         isBlockAllCandidate: (String) -> Boolean,
     ): Boolean {
         if (packageName in protectedPackages) return false
         if (packageName in blockedPackages) return true
-        return blockAll && isBlockAllCandidate(packageName)
+        return blockAll && packageName !in allowedPackages && isBlockAllCandidate(packageName)
     }
 }
 

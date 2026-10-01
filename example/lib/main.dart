@@ -118,13 +118,22 @@ class _HomePageState extends State<HomePage> {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
-  Future<void> _chooseAndroidApps() async {
-    final current = _blocking?.blockedPackages.toSet() ?? <String>{};
-    final selected = await Navigator.of(context).push<Set<String>>(
+  Future<Set<String>?> _pickApps(String title, Set<String> initial) {
+    return Navigator.of(context).push<Set<String>>(
       MaterialPageRoute(
-        builder: (_) => AppPickerPage(limiter: _limiter, initial: current),
+        builder:
+            (_) => AppPickerPage(
+              limiter: _limiter,
+              title: title,
+              initial: initial,
+            ),
       ),
     );
+  }
+
+  Future<void> _chooseAndroidApps() async {
+    final current = _blocking?.blockedPackages.toSet() ?? <String>{};
+    final selected = await _pickApps('Block apps', current);
     if (selected == null) return;
 
     final toBlock = selected.difference(current).toList();
@@ -134,6 +143,37 @@ class _HomePageState extends State<HomePage> {
       await _limiter.android.unblockApps(toUnblock);
       return '${selected.length} blocked';
     });
+  }
+
+  Future<void> _blockAllExcept() async {
+    final allowed = await _pickApps(
+      'Keep usable',
+      _blocking?.allowedPackages.toSet() ?? <String>{},
+    );
+    if (allowed == null) return;
+    await _run(
+      'Block all',
+      () => _limiter.android.blockAllApps(except: allowed.toList()),
+    );
+  }
+
+  Future<void> _customizeBlockScreen(bool custom) async {
+    await _run(
+      custom ? 'Custom block screen' : 'Default block screen',
+      () => _limiter.android.setBlockScreen(
+        custom
+            ? const BlockScreenConfig(
+              title: 'Not now',
+              message: 'You chose to stay focused until 6 pm.',
+              footer: 'App Limiter example',
+              backgroundColor: Color(0xFF1A237E),
+              textColor: Colors.white,
+              buttonLabel: 'Open App Limiter',
+              buttonAction: BlockScreenButtonAction.openHostApp,
+            )
+            : const BlockScreenConfig(),
+      ),
+    );
   }
 
   Widget _statusCard() {
@@ -176,6 +216,7 @@ class _HomePageState extends State<HomePage> {
                 'Blocking: ${blocking.isActive ? 'active' : 'off'}'
                 '${blocking.blockAll ? ' (all apps)' : ''}'
                 '${blocking.blockedPackages.isEmpty ? '' : ' – ${blocking.blockedPackages.length} apps'}'
+                '${blocking.allowedPackages.isEmpty ? '' : ' – ${blocking.allowedPackages.length} allowed'}'
                 '${_isIOS ? ' – selection: ${blocking.iosSelectedApplicationCount} apps, '
                         '${blocking.iosSelectedCategoryCount} categories' : ''}',
                 key: const Key('blockingText'),
@@ -224,6 +265,19 @@ class _HomePageState extends State<HomePage> {
           ElevatedButton(
             onPressed: () => _run('Block all', _limiter.android.blockAllApps),
             child: const Text('Block all apps'),
+          ),
+          ElevatedButton(
+            onPressed: _blockAllExcept,
+            child: const Text('Block all except…'),
+          ),
+          OutlinedButton(
+            key: const Key('customBlockScreen'),
+            onPressed: () => _customizeBlockScreen(true),
+            child: const Text('Custom block screen'),
+          ),
+          OutlinedButton(
+            onPressed: () => _customizeBlockScreen(false),
+            child: const Text('Default block screen'),
           ),
         ],
       ),
@@ -321,9 +375,11 @@ class AppPickerPage extends StatefulWidget {
     super.key,
     required this.limiter,
     required this.initial,
+    this.title = 'Block apps',
   });
 
   final AppLimiter limiter;
+  final String title;
   final Set<String> initial;
 
   @override
@@ -340,7 +396,7 @@ class _AppPickerPageState extends State<AppPickerPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Block apps (${_selected.length})'),
+        title: Text('${widget.title} (${_selected.length})'),
         actions: [
           TextButton(
             key: const Key('saveApps'),

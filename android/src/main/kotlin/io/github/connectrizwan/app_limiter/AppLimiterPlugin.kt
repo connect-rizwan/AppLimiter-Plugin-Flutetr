@@ -231,6 +231,7 @@ class AppLimiterPlugin :
             "active" to (store.isActive && store.hasTargets),
             "blockAll" to store.blockAll,
             "blockedPackages" to store.blockedPackages.sorted(),
+            "allowedPackages" to store.allowedPackages.sorted(),
         )
     }
 
@@ -359,6 +360,11 @@ class AppLimiterPlugin :
 
             "blockAllApps" -> {
                 if (!ensureCanBlock(result, allowEnterprise = false)) return
+                val except = call.argument<List<String>>("except")
+                    ?.map { it.trim() }
+                    ?.filter { it.isNotEmpty() }
+                    .orEmpty()
+                store.setAllowedPackages(except.toSet())
                 store.blockAll = true
                 syncService()
                 result.success(null)
@@ -372,6 +378,7 @@ class AppLimiterPlugin :
                 }
 
                 store.blockAll = false
+                store.setAllowedPackages(emptySet())
                 store.setBlockedPackages(stillSuspended)
                 syncService()
 
@@ -388,6 +395,24 @@ class AppLimiterPlugin :
 
             "getInstalledApps" -> {
                 getInstalledApps(call, result)
+            }
+
+            "setBlockScreen" -> {
+                @Suppress("UNCHECKED_CAST")
+                val config = BlockScreenConfig.fromMap(call.arguments as? Map<String, Any?> ?: emptyMap())
+                BlockScreenStore(context).save(config, call.argument<ByteArray>("icon"))
+                result.success(null)
+            }
+
+            "setNotification" -> {
+                val blockScreenStore = BlockScreenStore(context)
+                blockScreenStore.notificationTitle = call.argument<String>("title")?.takeIf { it.isNotBlank() }
+                blockScreenStore.notificationText = call.argument<String>("text")?.takeIf { it.isNotBlank() }
+                // Re-post the running service's notification with the new text.
+                if (store.isActive && store.hasTargets && hasRequiredPermissions()) {
+                    BlockAppService.start(context)
+                }
+                result.success(null)
             }
 
             "getCapabilities" -> {

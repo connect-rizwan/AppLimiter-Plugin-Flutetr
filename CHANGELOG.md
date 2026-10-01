@@ -17,6 +17,18 @@
 - `android.isEnterpriseCapable()`.
 - Android `requestPermission()` completes when the user returns from the settings screen.
 - `IosSchedule` type for iOS schedules.
+- Android `setBlockScreen(BlockScreenConfig)`: custom title, message, footer, colors,
+  icon and an optional button that closes the blocked app or opens the host app.
+- Android `setNotification()` to change the blocking notification text.
+- Android `blockAllApps(except: [...])` allowlist; `BlockingState.allowedPackages`.
+- `AppLimiterEventType.blockedAppOpened` event with the package name (Android).
+- Default texts are string resources that host apps can translate or override.
+
+### Fixed
+- The block screen footer showed "Digital Wellbeing" (Google's product name); it now
+  shows the host app's name.
+- A host app overriding the `block_overlay` layout no longer prevents the block screen
+  from showing.
 
 ### Deprecated
 - All 0.x methods; they keep working and forward to the new API. See the migration table in the README.

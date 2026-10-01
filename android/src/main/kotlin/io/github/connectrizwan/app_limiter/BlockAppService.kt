@@ -38,6 +38,7 @@ const val NOTIFICATION_ID = 1
  */
 class BlockAppService : Service() {
     private lateinit var store: BlockingStore
+    private lateinit var blockScreenStore: BlockScreenStore
     private lateinit var windowManager: WindowManager
     private lateinit var tracker: ForegroundAppTracker
     private var overlayView: View? = null
@@ -46,6 +47,9 @@ class BlockAppService : Service() {
     private var protectedPackages: Set<String> = emptySet()
     private var blockAllExemptPackages: Set<String> = emptySet()
     private var lastHomeLaunchMs = 0L
+
+    /** Blocked app currently covered, so "opened" is reported once per visit. */
+    private var currentBlockedPackage: String? = null
 
     private val overlayParams = WindowManager.LayoutParams(
         WindowManager.LayoutParams.MATCH_PARENT,
@@ -71,6 +75,7 @@ class BlockAppService : Service() {
     override fun onCreate() {
         super.onCreate()
         store = BlockingStore(this)
+        blockScreenStore = BlockScreenStore(this)
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         tracker = ForegroundAppTracker(::queryForegroundEvents)
     }
@@ -133,14 +138,23 @@ class BlockAppService : Service() {
             protectedPackages = protectedPackages,
             blockAll = store.blockAll,
             blockedPackages = store.blockedPackages,
+            allowedPackages = store.allowedPackages,
             isBlockAllCandidate = ::isBlockAllCandidate,
         )
         if (block) {
+            if (currentBlockedPackage != foregroundPackage) {
+                currentBlockedPackage = foregroundPackage
+                PluginEvents.emit(
+                    "android_blocked_app_opened",
+                    mapOf("packageName" to foregroundPackage),
+                )
+            }
             showOverlay()
             if (foregroundPackage in BlockPolicy.OVERLAY_HIDING_PACKAGES) {
                 goHome()
             }
         } else {
+            currentBlockedPackage = null
             hideOverlay()
         }
         return true
@@ -195,7 +209,7 @@ class BlockAppService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "App blocking",
+                getString(R.string.app_limiter_notification_channel),
                 NotificationManager.IMPORTANCE_LOW,
             )
             channel.setShowBadge(false)
@@ -213,8 +227,12 @@ class BlockAppService : Service() {
         }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("App blocking is active")
-            .setContentText("Restricted apps are blocked.")
+            .setContentTitle(
+                blockScreenStore.notificationTitle ?: getString(R.string.app_limiter_notification_title),
+            )
+            .setContentText(
+                blockScreenStore.notificationText ?: getString(R.string.app_limiter_notification_text),
+            )
             .setSmallIcon(R.drawable.ic_hourglass)
             .setOngoing(true)
             .setContentIntent(contentIntent)
@@ -300,10 +318,26 @@ class BlockAppService : Service() {
         if (overlayView != null) return
         try {
             val view = LayoutInflater.from(this).inflate(R.layout.block_overlay, null)
+            val config = blockScreenStore.load()
+            BlockScreen.apply(
+                view = view,
+                config = config,
+                icon = blockScreenStore.loadIcon(),
+                hostAppLabel = applicationInfo.loadLabel(packageManager).toString(),
+                onButtonClick = { onBlockScreenButton(config) },
+            )
             windowManager.addView(view, overlayParams)
             overlayView = view
         } catch (e: Exception) {
             Log.e(TAG, "Failed to show overlay", e)
+        }
+    }
+
+    private fun onBlockScreenButton(config: BlockScreenConfig) {
+        try {
+            startActivity(BlockScreen.buttonIntent(this, config))
+        } catch (e: Exception) {
+            Log.e(TAG, "Unable to handle block screen button", e)
         }
     }
 

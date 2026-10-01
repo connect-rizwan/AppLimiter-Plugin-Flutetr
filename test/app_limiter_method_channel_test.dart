@@ -173,6 +173,58 @@ void main() {
       expect(calls[1].arguments, {
         'packageNames': ['a.b'],
       });
+      expect(calls[2].arguments, {'except': <String>[]});
+    });
+
+    test('blockAllApps sends the allowlist', () async {
+      responses['blockAllApps'] = (_) => null;
+      await platform.androidBlockAllApps(except: ['com.whatsapp']);
+      expect(calls.single.arguments, {
+        'except': ['com.whatsapp'],
+      });
+    });
+
+    test('getBlockingState parses the allowlist', () async {
+      responses['getBlockingState'] = (_) => {
+        'active': true,
+        'blockAll': true,
+        'allowedPackages': ['com.whatsapp'],
+      };
+      final state = await platform.getBlockingState();
+      expect(state.blockAll, isTrue);
+      expect(state.allowedPackages, ['com.whatsapp']);
+    });
+
+    test('setBlockScreen serializes colors, icon and action', () async {
+      responses['setBlockScreen'] = (_) => null;
+      final icon = Uint8List.fromList([1, 2]);
+
+      await platform.androidSetBlockScreen(
+        BlockScreenConfig(
+          title: 'Focus',
+          backgroundColor: const Color(0xFF112233),
+          textColor: const Color(0x80FFFFFF),
+          icon: icon,
+          buttonLabel: 'Open',
+          buttonAction: BlockScreenButtonAction.openHostApp,
+        ),
+      );
+
+      final args = calls.single.arguments as Map;
+      expect(args['title'], 'Focus');
+      expect(args['message'], isNull);
+      expect(args['backgroundColor'], 0xFF112233);
+      expect(args['textColor'], 0x80FFFFFF);
+      expect(args['icon'], icon);
+      expect(args['showIcon'], isTrue);
+      expect(args['buttonLabel'], 'Open');
+      expect(args['buttonAction'], 'openHostApp');
+    });
+
+    test('setNotification', () async {
+      responses['setNotification'] = (_) => null;
+      await platform.androidSetNotification(title: 'T', text: null);
+      expect(calls.single.arguments, {'title': 'T', 'text': null});
     });
 
     test('getInstalledApps parses apps and passes options', () async {
@@ -325,6 +377,10 @@ void main() {
               'payload': <Object?, Object?>{'active': true},
               'timestamp': 1700000000,
             });
+            sink.success(<Object?, Object?>{
+              'name': 'android_blocked_app_opened',
+              'payload': <Object?, Object?>{'packageName': 'com.game'},
+            });
             sink.success(<Object?, Object?>{'name': 'something_new'});
             sink.success('not a map');
             sink.endOfStream();
@@ -334,16 +390,18 @@ void main() {
 
       final events = await platform.events.toList();
 
-      expect(events, hasLength(3));
+      expect(events, hasLength(4));
       expect(events[0].type, AppLimiterEventType.blockingStateChanged);
       expect(events[0].payload, {'active': true});
       expect(
         events[0].timestamp,
         DateTime.fromMillisecondsSinceEpoch(1700000000 * 1000),
       );
-      expect(events[1].type, AppLimiterEventType.unknown);
-      expect(events[1].name, 'something_new');
-      expect(events[2].payload, {'value': 'not a map'});
+      expect(events[1].type, AppLimiterEventType.blockedAppOpened);
+      expect(events[1].payload['packageName'], 'com.game');
+      expect(events[2].type, AppLimiterEventType.unknown);
+      expect(events[2].name, 'something_new');
+      expect(events[3].payload, {'value': 'not a map'});
     });
 
     test('returns the same broadcast stream for every caller', () {

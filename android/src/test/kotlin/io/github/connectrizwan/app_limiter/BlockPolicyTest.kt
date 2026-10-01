@@ -127,3 +127,51 @@ internal class InstalledAppsTest {
     assertEquals("undefined", InstalledApps.categoryName(42))
   }
 }
+
+internal class AllowlistTest {
+  private fun shouldBlock(pkg: String, blocked: Set<String> = emptySet(), allowed: Set<String>) =
+    BlockPolicy.shouldBlock(pkg, emptySet(), blockAll = true, blockedPackages = blocked, allowedPackages = allowed) { true }
+
+  @Test
+  fun blockAll_skipsAllowedPackages() {
+    assertFalse(shouldBlock("com.whatsapp", allowed = setOf("com.whatsapp")))
+    assertTrue(shouldBlock("com.game", allowed = setOf("com.whatsapp")))
+  }
+
+  @Test
+  fun explicitBlock_winsOverAllowlist() {
+    assertTrue(shouldBlock("com.whatsapp", blocked = setOf("com.whatsapp"), allowed = setOf("com.whatsapp")))
+  }
+}
+
+internal class BlockScreenConfigTest {
+  @Test
+  fun fromMap_readsAllFields() {
+    val config = BlockScreenConfig.fromMap(
+      mapOf(
+        "title" to "Focus",
+        "message" to "Back to work",
+        "footer" to "Acme",
+        "backgroundColor" to 0xFF112233L, // Dart sends ARGB > Int.MAX_VALUE as Long
+        "textColor" to 0x7FFFFFFF,
+        "buttonLabel" to "Open",
+        "buttonAction" to "openHostApp",
+        "showIcon" to false,
+      ),
+    )
+    assertEquals("Focus", config.title)
+    assertEquals("Back to work", config.message)
+    assertEquals("Acme", config.footer)
+    assertEquals(0xFF112233L.toInt(), config.backgroundColor)
+    assertEquals(0x7FFFFFFF, config.textColor)
+    assertEquals("Open", config.buttonLabel)
+    assertEquals(BlockScreenConfig.ACTION_OPEN_HOST_APP, config.buttonAction)
+    assertFalse(config.showIcon)
+  }
+
+  @Test
+  fun fromMap_usesDefaultsForMissingBlankOrUnknownValues() {
+    val config = BlockScreenConfig.fromMap(mapOf("title" to "  ", "buttonAction" to "explode"))
+    assertEquals(BlockScreenConfig(), config)
+  }
+}

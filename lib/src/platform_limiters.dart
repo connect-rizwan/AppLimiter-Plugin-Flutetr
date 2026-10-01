@@ -59,14 +59,32 @@ class AndroidAppLimiter {
     await _platform.androidUnblockApps(names);
   }
 
-  /// Blocks every app with a launcher icon, preinstalled apps included.
+  /// Blocks every app with a launcher icon, preinstalled apps included,
+  /// except the packages in [except].
   ///
-  /// The host app, the home launcher, the phone dialer and Settings stay
-  /// usable. Settings can still be blocked explicitly with [blockApp].
+  /// The host app, the home launcher, the phone dialer and Settings always
+  /// stay usable. Apps blocked with [blockApp] stay blocked even if listed in
+  /// [except]. Calling it again replaces the previous [except] list.
   /// Undo with `AppLimiter.unblockAll()`.
-  Future<void> blockAllApps() {
+  Future<void> blockAllApps({List<String> except = const []}) {
     _requireAndroid('blockAllApps');
-    return _platform.androidBlockAllApps();
+    return _platform.androidBlockAllApps(except: _validPackageNames(except));
+  }
+
+  /// Customizes the block screen shown over blocked apps.
+  ///
+  /// Saved on the device and used from the next time a blocked app opens.
+  /// Pass `const BlockScreenConfig()` to restore the defaults.
+  Future<void> setBlockScreen(BlockScreenConfig config) {
+    _requireAndroid('setBlockScreen');
+    return _platform.androidSetBlockScreen(config);
+  }
+
+  /// Sets the text of the notification shown while blocking is active.
+  /// Null restores the default.
+  Future<void> setNotification({String? title, String? text}) {
+    _requireAndroid('setNotification');
+    return _platform.androidSetNotification(title: title, text: text);
   }
 
   /// Apps with a launcher icon, sorted by name, excluding the host app.

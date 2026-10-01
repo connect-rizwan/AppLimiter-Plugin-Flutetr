@@ -123,6 +123,31 @@ void main() {
       expect(stateEvents.last.payload['active'], isFalse);
     });
 
+    testWidgets('block all with an allowlist', (tester) async {
+      if (!(await limiter.getPermissionStatus()).isGranted) return;
+
+      await limiter.android.blockAllApps(except: ['com.google.android.gm']);
+      var state = await limiter.getBlockingState();
+      expect(state.blockAll, isTrue);
+      expect(state.allowedPackages, ['com.google.android.gm']);
+
+      await limiter.unblockAll();
+      state = await limiter.getBlockingState();
+      expect(state.allowedPackages, isEmpty);
+    });
+
+    testWidgets('block screen and notification can be configured', (
+      tester,
+    ) async {
+      await limiter.android.setBlockScreen(
+        const BlockScreenConfig(title: 'Focus', buttonLabel: 'Close'),
+      );
+      await limiter.android.setNotification(title: 'Focus mode', text: 'On');
+      // Restore defaults for other tests and manual runs.
+      await limiter.android.setBlockScreen(const BlockScreenConfig());
+      await limiter.android.setNotification();
+    });
+
     testWidgets('block all and unblock all', (tester) async {
       if (!(await limiter.getPermissionStatus()).isGranted) return;
 

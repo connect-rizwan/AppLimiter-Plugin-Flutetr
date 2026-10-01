@@ -75,7 +75,16 @@ class FakeAppLimiterPlatform extends AppLimiterPlatform
       _record('androidUnblockApps', packageNames);
 
   @override
-  Future<void> androidBlockAllApps() async => _record('androidBlockAllApps');
+  Future<void> androidBlockAllApps({List<String> except = const []}) async =>
+      _record('androidBlockAllApps', except);
+
+  @override
+  Future<void> androidSetBlockScreen(BlockScreenConfig config) async =>
+      _record('androidSetBlockScreen', config);
+
+  @override
+  Future<void> androidSetNotification({String? title, String? text}) async =>
+      _record('androidSetNotification', [title, text]);
 
   @override
   Future<List<InstalledApp>> androidGetInstalledApps({
@@ -206,6 +215,24 @@ void main() {
       expect(fake.arguments[1], ['c.d', 'e.f']);
       expect(fake.arguments[5], [true, true, 96]);
       expect(apps.single.packageName, 'a.b');
+    });
+
+    test('blockAllApps trims and validates the allowlist', () async {
+      await limiter.android.blockAllApps(except: [' com.whatsapp ']);
+      expect(fake.arguments.single, ['com.whatsapp']);
+      expect(
+        () => limiter.android.blockAllApps(except: ['']),
+        throwsAppLimiter(AppLimiterErrorCode.invalidArgument),
+      );
+    });
+
+    test('block screen and notification configuration', () async {
+      const config = BlockScreenConfig(title: 'Focus');
+      await limiter.android.setBlockScreen(config);
+      await limiter.android.setNotification(title: 'On', text: 'Blocking');
+      expect(fake.calls, ['androidSetBlockScreen', 'androidSetNotification']);
+      expect(fake.arguments[0], same(config));
+      expect(fake.arguments[1], ['On', 'Blocking']);
     });
 
     test('rejects empty package names without calling native', () {

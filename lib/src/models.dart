@@ -1,3 +1,5 @@
+import 'dart:ui' show Color;
+
 import 'package:flutter/foundation.dart';
 
 /// A permission the plugin needs to block apps.
@@ -85,6 +87,7 @@ class BlockingState {
     required this.isActive,
     this.blockAll = false,
     this.blockedPackages = const <String>[],
+    this.allowedPackages = const <String>[],
     this.iosSelectedApplicationCount = 0,
     this.iosSelectedCategoryCount = 0,
     this.iosSelectedWebDomainCount = 0,
@@ -98,6 +101,9 @@ class BlockingState {
 
   /// Android: individually blocked packages.
   final List<String> blockedPackages;
+
+  /// Android: packages left usable while [blockAll] is on.
+  final List<String> allowedPackages;
 
   /// iOS: number of apps in the saved picker selection.
   final int iosSelectedApplicationCount;
@@ -121,6 +127,7 @@ class BlockingState {
       other.isActive == isActive &&
       other.blockAll == blockAll &&
       listEquals(other.blockedPackages, blockedPackages) &&
+      listEquals(other.allowedPackages, allowedPackages) &&
       other.iosSelectedApplicationCount == iosSelectedApplicationCount &&
       other.iosSelectedCategoryCount == iosSelectedCategoryCount &&
       other.iosSelectedWebDomainCount == iosSelectedWebDomainCount;
@@ -130,6 +137,7 @@ class BlockingState {
     isActive,
     blockAll,
     Object.hashAll(blockedPackages),
+    Object.hashAll(allowedPackages),
     iosSelectedApplicationCount,
     iosSelectedCategoryCount,
     iosSelectedWebDomainCount,
@@ -138,7 +146,8 @@ class BlockingState {
   @override
   String toString() =>
       'BlockingState(isActive: $isActive, blockAll: $blockAll, '
-      'blockedPackages: $blockedPackages, iosSelection: '
+      'blockedPackages: $blockedPackages, allowedPackages: $allowedPackages, '
+      'iosSelection: '
       '$iosSelectedApplicationCount apps / $iosSelectedCategoryCount categories / '
       '$iosSelectedWebDomainCount domains)';
 }
@@ -278,6 +287,11 @@ enum AppLimiterEventType {
   /// iOS picker was shown.
   pickerPresented,
 
+  /// Android: the user opened a blocked app and the block screen was shown.
+  /// `payload['packageName']` is the app. Only delivered while your app's
+  /// Flutter engine is running.
+  blockedAppOpened,
+
   /// An event this version of the plugin does not know.
   unknown,
 }
@@ -301,6 +315,7 @@ class AppLimiterEvent {
     'ios_selection_updated': AppLimiterEventType.selectionChanged,
     'ios_schedule_configured': AppLimiterEventType.scheduleChanged,
     'ios_picker_presented': AppLimiterEventType.pickerPresented,
+    'android_blocked_app_opened': AppLimiterEventType.blockedAppOpened,
   };
 
   /// Raw native event name, e.g. `android_blocking_state_changed`.
@@ -334,4 +349,71 @@ class AppLimiterEvent {
 
   @override
   String toString() => 'AppLimiterEvent($name, $payload)';
+}
+
+/// What the button on the Android block screen does.
+enum BlockScreenButtonAction {
+  /// Leaves the blocked app for the home screen.
+  closeApp,
+
+  /// Opens your app, e.g. to show why the app is blocked.
+  openHostApp,
+}
+
+/// Look of the Android block screen. Null fields keep the default.
+///
+/// The defaults can also be translated by overriding the string resources
+/// `app_limiter_block_title`, `app_limiter_block_message` and
+/// `app_limiter_block_detail` in your app.
+@immutable
+class BlockScreenConfig {
+  const BlockScreenConfig({
+    this.title,
+    this.message,
+    this.footer,
+    this.backgroundColor,
+    this.textColor,
+    this.icon,
+    this.showIcon = true,
+    this.buttonLabel,
+    this.buttonAction = BlockScreenButtonAction.closeApp,
+  });
+
+  /// Large heading. Default: "Screen Time Blocked".
+  final String? title;
+
+  /// Text under the title. Replaces both default lines.
+  final String? message;
+
+  /// Small text at the bottom. Default: your app's name.
+  final String? footer;
+
+  /// Solid background. Default: a dark gradient.
+  final Color? backgroundColor;
+
+  /// Color of all texts and of the default icon.
+  final Color? textColor;
+
+  /// PNG or JPEG bytes shown instead of the hourglass icon, e.g. your logo
+  /// loaded with `rootBundle.load(...)`.
+  final Uint8List? icon;
+
+  final bool showIcon;
+
+  /// Shows a button with this label. No button when null.
+  final String? buttonLabel;
+
+  final BlockScreenButtonAction buttonAction;
+
+  Map<String, dynamic> toMap() => <String, dynamic>{
+    'title': title,
+    'message': message,
+    'footer': footer,
+    'backgroundColor': backgroundColor?.toARGB32(),
+    'textColor': textColor?.toARGB32(),
+    'icon': icon,
+    'showIcon': showIcon,
+    'buttonLabel': buttonLabel,
+    'buttonAction': buttonAction.name,
+  };
 }
