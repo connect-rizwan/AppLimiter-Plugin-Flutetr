@@ -1,4 +1,4 @@
-package com.example.app_limiter
+package io.github.connectrizwan.app_limiter
 
 import android.app.admin.DeviceAdminReceiver
 

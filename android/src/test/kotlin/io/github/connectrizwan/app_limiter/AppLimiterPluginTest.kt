@@ -1,4 +1,4 @@
-package com.example.app_limiter
+package io.github.connectrizwan.app_limiter
 
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -29,24 +29,37 @@ internal class AppLimiterPluginTest {
   }
 
   @Test
-  fun onMethodCall_blockAppWithoutPackage_returnsInvalidArgument() {
+  fun onMethodCall_blockAppsWithBlankPackage_returnsInvalidArgument() {
     val plugin = AppLimiterPlugin()
     val mockResult: MethodChannel.Result = Mockito.mock(MethodChannel.Result::class.java)
 
-    plugin.onMethodCall(MethodCall("blockApp", mapOf("packageName" to "  ")), mockResult)
+    plugin.onMethodCall(
+      MethodCall("blockApps", mapOf("packageNames" to listOf("com.a", "  "))),
+      mockResult,
+    )
 
     Mockito.verify(mockResult).error(eq("INVALID_ARGUMENT"), anyString(), any())
     Mockito.verify(mockResult, Mockito.never()).success(any())
   }
 
   @Test
-  fun onMethodCall_unblockAppWithoutPackage_returnsInvalidArgument() {
+  fun onMethodCall_unblockAppsWithoutPackages_returnsInvalidArgument() {
     val plugin = AppLimiterPlugin()
     val mockResult: MethodChannel.Result = Mockito.mock(MethodChannel.Result::class.java)
 
-    plugin.onMethodCall(MethodCall("unblockApp", emptyMap<String, Any>()), mockResult)
+    plugin.onMethodCall(MethodCall("unblockApps", emptyMap<String, Any>()), mockResult)
 
     Mockito.verify(mockResult).error(eq("INVALID_ARGUMENT"), anyString(), any())
+  }
+
+  @Test
+  fun onMethodCall_requestPermissionWithoutActivity_returnsNoActivity() {
+    val plugin = AppLimiterPlugin()
+    val mockResult: MethodChannel.Result = Mockito.mock(MethodChannel.Result::class.java)
+
+    plugin.onMethodCall(MethodCall("requestPermission", emptyMap<String, Any>()), mockResult)
+
+    Mockito.verify(mockResult).error(eq("NO_ACTIVITY"), anyString(), any())
   }
 
   @Test

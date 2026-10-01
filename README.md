@@ -1,68 +1,121 @@
 # App Limiter Plugin
 
-A Flutter plugin that allows developers to limit app usage and screen time on Android and iOS by blocking/unblocking apps and managing screen time permissions.
+A Flutter plugin to block apps and limit screen time on Android and iOS.
 
 ## 🧠 Features
 
-- ✅ Block/unblock individual apps or every user app on Android
-- ✅ Pick, block and unblock apps and categories on iOS (Screen Time API)
-- ✅ Query blocking state and permission/authorization status
+- ✅ One typed API for permissions, blocking state and events on both platforms
+- ✅ Android: block individual apps or every app, list installed apps with icons
+- ✅ iOS: pick, block and unblock apps, categories and websites (Screen Time API)
 - ✅ Blocking survives reboots and app updates on Android
-- ✅ Live event stream for blocking, selection and permission changes
+- ✅ Typed errors (`AppLimiterException` with an `AppLimiterErrorCode`)
 - ✅ Optional Android enterprise (device owner) package suspension
 
-### 🔧 Available Methods
+## 🚀 Quick start
 
 ```dart
-// Common
+import 'package:app_limiter/app_limiter.dart';
+
+final limiter = AppLimiter();
+
+// 1. Permissions (call until granted; each call handles one permission)
+var status = await limiter.getPermissionStatus();
+if (!status.isGranted) {
+  status = await limiter.requestPermission();
+}
+
+// 2. Block
+if (Platform.isAndroid) {
+  final apps = await limiter.android.getInstalledApps(includeIcons: true);
+  // ...let the user choose, then:
+  await limiter.android.blockApps(['com.google.android.youtube']);
+} else if (Platform.isIOS) {
+  if (await limiter.ios.showAppPicker()) {
+    await limiter.ios.blockSelectedApps();
+  }
+}
+
+// 3. Inspect and undo
+final state = await limiter.getBlockingState();
+await limiter.unblockAll();
+```
+
+## 🔧 API
+
+### Common (Android and iOS)
+
+```dart
+static bool AppLimiter.isSupported
 Future<String?> getPlatformVersion()
-Future<Map<String, dynamic>> getPlatformCapabilities()
-Stream<Map<String, dynamic>> events
-
-// Android
-Future<bool> isAndroidPermissionAllowed()
-Future<void> requestAndroidPermission()
-Future<void> blockAndroidApp({required String packageName})
-Future<void> unblockAndroidApp({required String packageName})
-Future<void> blockAllAndroidApps()
-Future<void> unblockAllAndroidApps()
-Future<List<String>> getBlockedAndroidApps()
-Future<bool> isAndroidBlockingActive()
-Future<void> setAndroidEnterpriseModeEnabled({required bool enabled})
-Future<bool> isAndroidEnterpriseModeEnabled()
-
-// iOS
-Future<bool> requestIosPermission()
-Future<String> getIOSAuthorizationStatus() // notDetermined | denied | approved
-Future<bool> showIOSAppPicker()            // selection only, true if confirmed
-Future<void> blockIOSApps()                // shield the saved selection
-Future<void> unblockIOSApps()
-Future<bool> isIOSAppsBlocked()
-Future<void> selectAndConfigureIosAppRestrictions({Map<String, dynamic>? schedule}) // pick + block in one step
-Future<void> configureIosSchedule(Map<String, dynamic> schedule)
+Future<PermissionStatus> getPermissionStatus()
+Future<PermissionStatus> requestPermission([AppPermission? permission])
+Future<BlockingState> getBlockingState()
+Future<void> unblockAll()
+Stream<AppLimiterEvent> events
 ```
 
-Android-only methods throw `MissingPluginException` on iOS and vice versa.
+- `PermissionStatus.isGranted` is true once every required permission is granted;
+  `missing` / `optionalMissing` list the rest.
+- On Android, `requestPermission()` opens the settings screen for the next missing
+  permission (overlay → usage access → notifications) and completes when the
+  user returns to the app.
+- On iOS, it shows the Screen Time prompt. Once the user declines,
+  `iosAuthorizationStatus` is `denied` and iOS will not prompt again.
 
-Deprecated compatibility methods still available:
+### Android (`limiter.android`)
 
 ```dart
-blockAndUnblockIOSApp() // -> selectAndConfigureIosAppRestrictions()
-blocAndroidApp()        // -> blockAllAndroidApps()
-unblocAndroidApp()      // -> unblockAllAndroidApps()
+Future<void> blockApp(String packageName)
+Future<void> blockApps(List<String> packageNames)
+Future<void> unblockApp(String packageName)
+Future<void> unblockApps(List<String> packageNames)
+Future<void> blockAllApps()
+Future<List<InstalledApp>> getInstalledApps({bool includeIcons = false, bool includeSystemApps = true, int iconSize = 96})
+Future<bool> isEnterpriseCapable()
+Future<void> setEnterpriseModeEnabled(bool enabled)
+Future<bool> isEnterpriseModeEnabled()
 ```
+
+`InstalledApp` has `packageName`, `name`, `isSystemApp`, `category` and, when
+requested, a PNG `icon` (`Image.memory(app.icon!)`).
+
+### iOS (`limiter.ios`)
+
+```dart
+Future<bool> showAppPicker()          // selection only; true if the user tapped Done
+Future<void> blockSelectedApps()      // shield the saved selection
+Future<void> showAppPickerAndBlock({IosSchedule? schedule})
+Future<void> configureSchedule(IosSchedule schedule)
+```
+
+iOS never reveals which apps were chosen: the picker returns opaque tokens that
+stay on the device. `BlockingState` reports how many apps, categories and
+websites are selected.
+
+Calling an `android` method on iOS (or the reverse) throws
+`AppLimiterException` with `AppLimiterErrorCode.unsupported`.
 
 ### Errors
 
-Failures are reported as `PlatformException` with these codes:
+Every failure is an `AppLimiterException`:
 
-| Code | Meaning |
+| `AppLimiterErrorCode` | Meaning |
 | --- | --- |
-| `PERMISSION_DENIED` | Android overlay/usage access or iOS Screen Time access missing |
-| `NO_SELECTION` | `blockIOSApps()` called before choosing apps |
-| `INVALID_ARGUMENT` | Empty Android package name |
-| `NO_VIEW_CONTROLLER` | iOS picker could not be presented |
-| `ENTERPRISE_ACTION_FAILED` / `ENTERPRISE_NOT_AVAILABLE` | Device owner operations failed |
+| `permissionDenied` | A required permission is missing |
+| `noSelection` | `ios.blockSelectedApps()` called before choosing apps |
+| `invalidArgument` | Empty package name |
+| `noActivity` | Android call needs a foreground activity |
+| `requestInProgress` | Another `requestPermission()` is still waiting for the user |
+| `noViewController` | iOS picker could not be presented |
+| `authorizationFailed` | iOS Screen Time request failed (restricted device, ...) |
+| `enterpriseNotAvailable` / `enterpriseActionFailed` | Device owner operations failed |
+| `unsupported` | Wrong platform or OS version |
+
+### Events
+
+`events` emits `AppLimiterEvent`s with a `type` (`blockingStateChanged`,
+`blockingStopped`, `permissionChanged`, `selectionChanged`, `scheduleChanged`,
+`pickerPresented`), a `payload` map and a `timestamp`.
 
 ## 🪪 Setup
 
@@ -74,23 +127,19 @@ The plugin's manifest declares every permission, the foreground service (type
 `specialUse`, required on Android 14+) and the receivers; nothing needs to be added
 to your app's manifest.
 
-At runtime, call `requestAndroidPermission()` until `isAndroidPermissionAllowed()`
-returns true. Each call opens the settings screen for the next missing permission:
-display over other apps, then usage access, then notifications (Android 13+).
-
 Google Play notes:
 
 - `QUERY_ALL_PACKAGES`, `PACKAGE_USAGE_STATS` and the `specialUse` foreground
   service need a declaration in the Play Console explaining the app-blocking use.
 
-Limitations:
+Behaviour:
 
+- `blockAllApps()` blocks every app with a launcher icon, including preinstalled
+  ones such as YouTube or Gmail, but keeps the phone dialer and Settings usable.
+  Block Settings explicitly with `blockApp` if needed.
+- The host app, the home launcher and System UI are never blocked.
 - Settings, the permission controller and the package installer hide third-party
   overlays. When they are blocked, the user is sent to the home screen instead.
-- The host app, the home launcher and System UI are never blocked.
-- `blockAllAndroidApps()` blocks every app with a launcher icon, including
-  preinstalled ones such as YouTube or Gmail, but keeps the phone dialer and
-  Settings usable. Block Settings explicitly with `blockAndroidApp` if needed.
 
 ### 🟣 iOS
 
@@ -99,10 +148,35 @@ Limitations:
    (entitlements do not go in `Info.plist`).
 2. Distribution builds need the Family Controls (Distribution) entitlement
    [requested from Apple](https://developer.apple.com/contact/request/family-controls-distribution).
-3. Schedules set with `configureIosSchedule` only take effect if your app ships a
+3. Schedules set with `configureSchedule` only take effect if your app ships a
    `DeviceActivityMonitor` extension that applies shields on interval events.
 
 Both Swift Package Manager and CocoaPods are supported.
+
+## ⬆️ Migrating from 0.x
+
+The 0.x methods still work but are deprecated. The one breaking change is
+`events`, which now emits `AppLimiterEvent` instead of `Map<String, dynamic>`
+(use `event.toMap()` for the old shape). Errors are now `AppLimiterException`
+instead of `PlatformException`/`ArgumentError`.
+
+| 0.x | 1.0 |
+| --- | --- |
+| `isAndroidPermissionAllowed()` | `(await getPermissionStatus()).isGranted` |
+| `requestAndroidPermission()` / `requestIosPermission()` | `requestPermission()` |
+| `blockAndroidApp(packageName: p)` | `android.blockApp(p)` |
+| `unblockAndroidApp(packageName: p)` | `android.unblockApp(p)` |
+| `blockAllAndroidApps()` / `blocAndroidApp()` | `android.blockAllApps()` |
+| `unblockAllAndroidApps()` / `unblocAndroidApp()` / `unblockIOSApps()` | `unblockAll()` |
+| `getBlockedAndroidApps()` | `(await getBlockingState()).blockedPackages` |
+| `isAndroidBlockingActive()` / `isIOSAppsBlocked()` | `(await getBlockingState()).isActive` |
+| `showIOSAppPicker()` | `ios.showAppPicker()` |
+| `blockIOSApps()` | `ios.blockSelectedApps()` |
+| `selectAndConfigureIosAppRestrictions(schedule: {...})` | `ios.showAppPickerAndBlock(schedule: IosSchedule(...))` |
+| `configureIosSchedule({...})` | `ios.configureSchedule(IosSchedule(...))` |
+| `getIOSAuthorizationStatus()` | `(await getPermissionStatus()).iosAuthorizationStatus` |
+| `setAndroidEnterpriseModeEnabled(enabled: e)` | `android.setEnterpriseModeEnabled(e)` |
+| `getPlatformCapabilities()` | `getPermissionStatus()`, `getBlockingState()`, `android.isEnterpriseCapable()` |
 
 ## 📱 Platform Support
 
@@ -110,45 +184,9 @@ Both Swift Package Manager and CocoaPods are supported.
 | -------- | ------- |
 | Android  | ✅      |
 | iOS      | ✅      |
-| Web      | ❌      |
+| Web, desktop | ❌ (`AppLimiter.isSupported` is false) |
 
-## 🧪 Example Usage
-
-```dart
-final plugin = AppLimiter();
-
-// Android
-if (!await plugin.isAndroidPermissionAllowed()) {
-  await plugin.requestAndroidPermission();
-}
-await plugin.blockAndroidApp(packageName: 'com.example.target');
-await plugin.unblockAndroidApp(packageName: 'com.example.target');
-await plugin.blockAllAndroidApps();
-await plugin.unblockAllAndroidApps();
-
-// Optional enterprise mode (requires Android device-owner setup)
-final capabilities = await plugin.getPlatformCapabilities();
-if (capabilities['enterpriseCapable'] == true) {
-  await plugin.setAndroidEnterpriseModeEnabled(enabled: true);
-}
-
-// iOS
-if (await plugin.requestIosPermission()) {
-  if (await plugin.showIOSAppPicker()) {
-    await plugin.blockIOSApps();
-  }
-}
-await plugin.unblockIOSApps();
-
-plugin.events.listen((event) {
-  // event['name'] is one of: android_blocking_state_changed,
-  // android_blocking_stopped, ios_blocking_state_changed, ios_permission_status,
-  // ios_selection_updated, ios_schedule_configured, ios_picker_presented
-  print(event);
-});
-```
-
-Check the full example in the /example directory.
+Check the full example, including an installed-apps picker, in the /example directory.
 
 ## 🧪 Testing
 
@@ -156,11 +194,11 @@ Check the full example in the /example directory.
 flutter test                                   # Dart unit tests
 cd example && flutter test                     # example widget tests
 cd example/android && ./gradlew :app_limiter:testDebugUnitTest   # Kotlin unit tests
-cd example && flutter test integration_test    # on a device or emulator
+cd example && flutter test integration_test --no-uninstall      # on a device or emulator
 ```
 
 To cover the Android blocking path in the integration tests, grant the
-permissions first (`flutter test ... --no-uninstall` keeps them between runs):
+permissions first:
 
 ```sh
 adb shell appops set com.example.app_limiter_example SYSTEM_ALERT_WINDOW allow

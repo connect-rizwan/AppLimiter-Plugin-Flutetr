@@ -1,6 +1,7 @@
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import 'app_limiter_method_channel.dart';
+import 'src/models.dart';
 
 /// The interface that implementations of app_limiter must implement.
 ///
@@ -30,158 +31,68 @@ abstract class AppLimiterPlatform extends PlatformInterface {
     _instance = instance;
   }
 
-  /// Gets the platform version.
-  Future<String?> getPlatformVersion() {
-    throw UnimplementedError('getPlatformVersion() has not been implemented.');
-  }
+  UnimplementedError _unimplemented(String method) =>
+      UnimplementedError('$method() has not been implemented.');
 
-  /// Handles blocking and unblocking operations for iOS apps.
-  @Deprecated('Use selectAndConfigureIosAppRestrictions instead.')
-  Future<void> blockAndUnblockIOSApp() {
-    return selectAndConfigureIosAppRestrictions();
-  }
+  // Common
 
-  /// Opens iOS app/category picker and applies current restrictions.
-  ///
-  /// [schedule] supports keys: startHour, startMinute, endHour, endMinute,
-  /// repeats, thresholdMinutes.
-  Future<void> selectAndConfigureIosAppRestrictions({
-    Map<String, dynamic>? schedule,
-  }) {
-    throw UnimplementedError(
-      'selectAndConfigureIosAppRestrictions() has not been implemented.',
-    );
-  }
+  Future<String?> getPlatformVersion() =>
+      throw _unimplemented('getPlatformVersion');
 
-  /// Updates iOS schedule without reopening app/category picker.
-  Future<void> configureIosSchedule(Map<String, dynamic> schedule) {
-    throw UnimplementedError(
-      'configureIosSchedule() has not been implemented.',
-    );
-  }
+  Future<PermissionStatus> getPermissionStatus() =>
+      throw _unimplemented('getPermissionStatus');
 
-  /// Shows the iOS app/category picker without applying any restriction.
-  ///
-  /// Completes with true when the user confirmed a selection and false when
-  /// the picker was cancelled.
-  Future<bool> showIOSAppPicker() {
-    throw UnimplementedError('showIOSAppPicker() has not been implemented.');
-  }
+  /// Requests [permission], or the next missing required permission when null.
+  Future<PermissionStatus> requestPermission([AppPermission? permission]) =>
+      throw _unimplemented('requestPermission');
 
-  /// Shields the apps and categories previously chosen in the iOS picker.
-  Future<void> blockIOSApps() {
-    throw UnimplementedError('blockIOSApps() has not been implemented.');
-  }
+  Future<BlockingState> getBlockingState() =>
+      throw _unimplemented('getBlockingState');
 
-  /// Removes every shield applied by this plugin on iOS.
-  Future<void> unblockIOSApps() {
-    throw UnimplementedError('unblockIOSApps() has not been implemented.');
-  }
+  Future<void> unblockAll() => throw _unimplemented('unblockAll');
 
-  /// Returns true if any iOS app or category is currently shielded.
-  Future<bool> isIOSAppsBlocked() {
-    throw UnimplementedError('isIOSAppsBlocked() has not been implemented.');
-  }
+  Stream<AppLimiterEvent> get events => throw _unimplemented('events');
 
-  /// Returns the iOS Screen Time authorization status.
-  Future<String> getIOSAuthorizationStatus() {
-    throw UnimplementedError(
-      'getIOSAuthorizationStatus() has not been implemented.',
-    );
-  }
+  /// Raw capability map, kept for the deprecated `getPlatformCapabilities()`.
+  Future<Map<String, dynamic>> getCapabilities() =>
+      throw _unimplemented('getCapabilities');
 
-  /// Requests necessary permissions on iOS.
-  Future<bool> requestIosPermission() {
-    throw UnimplementedError(
-      'requestIosPermission() has not been implemented.',
-    );
-  }
+  // Android
 
-  /// Checks if required Android permissions are granted.
-  Future<bool> isAndroidPermissionAllowed() {
-    throw UnimplementedError(
-      'isAndroidPermissionAllowed() has not been implemented.',
-    );
-  }
+  Future<void> androidBlockApps(List<String> packageNames) =>
+      throw _unimplemented('androidBlockApps');
 
-  /// Requests necessary Android permissions.
-  Future<void> requestAndroidPermission() {
-    throw UnimplementedError(
-      'requestAndroidPermission() has not been implemented.',
-    );
-  }
+  Future<void> androidUnblockApps(List<String> packageNames) =>
+      throw _unimplemented('androidUnblockApps');
 
-  /// Blocks every Android app with a launcher icon, except essential ones.
-  @Deprecated('Use blockAllAndroidApps instead.')
-  Future<void> blockAndroidApps() {
-    return blockAllAndroidApps();
-  }
+  Future<void> androidBlockAllApps() =>
+      throw _unimplemented('androidBlockAllApps');
 
-  /// Blocks a specific Android app package.
-  Future<void> blockAndroidApp({required String packageName}) {
-    throw UnimplementedError('blockAndroidApp() has not been implemented.');
-  }
+  Future<List<InstalledApp>> androidGetInstalledApps({
+    bool includeIcons = false,
+    bool includeSystemApps = true,
+    int iconSize = 96,
+  }) => throw _unimplemented('androidGetInstalledApps');
 
-  /// Blocks every Android app with a launcher icon, except essential ones.
-  Future<void> blockAllAndroidApps() {
-    throw UnimplementedError('blockAllAndroidApps() has not been implemented.');
-  }
+  Future<bool> androidIsEnterpriseCapable() =>
+      throw _unimplemented('androidIsEnterpriseCapable');
 
-  /// Removes every Android block.
-  @Deprecated('Use unblockAllAndroidApps instead.')
-  Future<void> unblockAndroidApps() {
-    return unblockAllAndroidApps();
-  }
+  Future<void> androidSetEnterpriseModeEnabled(bool enabled) =>
+      throw _unimplemented('androidSetEnterpriseModeEnabled');
 
-  /// Unblocks a specific Android app package.
-  Future<void> unblockAndroidApp({required String packageName}) {
-    throw UnimplementedError('unblockAndroidApp() has not been implemented.');
-  }
+  Future<bool> androidIsEnterpriseModeEnabled() =>
+      throw _unimplemented('androidIsEnterpriseModeEnabled');
 
-  /// Removes every Android block and stops the blocking service.
-  Future<void> unblockAllAndroidApps() {
-    throw UnimplementedError(
-      'unblockAllAndroidApps() has not been implemented.',
-    );
-  }
+  // iOS
 
-  /// Returns the package names that are individually blocked on Android.
-  Future<List<String>> getBlockedAndroidApps() {
-    throw UnimplementedError(
-      'getBlockedAndroidApps() has not been implemented.',
-    );
-  }
+  Future<bool> iosShowAppPicker() => throw _unimplemented('iosShowAppPicker');
 
-  /// Returns true if Android blocking is currently active.
-  Future<bool> isAndroidBlockingActive() {
-    throw UnimplementedError(
-      'isAndroidBlockingActive() has not been implemented.',
-    );
-  }
+  Future<void> iosBlockSelectedApps() =>
+      throw _unimplemented('iosBlockSelectedApps');
 
-  /// Returns platform capabilities and currently active plugin features.
-  Future<Map<String, dynamic>> getPlatformCapabilities() {
-    throw UnimplementedError(
-      'getPlatformCapabilities() has not been implemented.',
-    );
-  }
+  Future<void> iosShowAppPickerAndBlock({Map<String, dynamic>? schedule}) =>
+      throw _unimplemented('iosShowAppPickerAndBlock');
 
-  /// Enables or disables optional Android enterprise mode.
-  Future<void> setAndroidEnterpriseModeEnabled({required bool enabled}) {
-    throw UnimplementedError(
-      'setAndroidEnterpriseModeEnabled() has not been implemented.',
-    );
-  }
-
-  /// Returns true if Android enterprise mode is currently active.
-  Future<bool> isAndroidEnterpriseModeEnabled() {
-    throw UnimplementedError(
-      'isAndroidEnterpriseModeEnabled() has not been implemented.',
-    );
-  }
-
-  /// Event stream for permission, schedule, and selection state updates.
-  Stream<Map<String, dynamic>> getEventStream() {
-    throw UnimplementedError('getEventStream() has not been implemented.');
-  }
+  Future<void> iosConfigureSchedule(Map<String, dynamic> schedule) =>
+      throw _unimplemented('iosConfigureSchedule');
 }

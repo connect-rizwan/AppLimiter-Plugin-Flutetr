@@ -1,4 +1,4 @@
-package com.example.app_limiter
+package io.github.connectrizwan.app_limiter
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -113,5 +113,17 @@ internal class ForegroundAppTrackerTest {
     // Event timestamped just before the previous query end, delivered afterwards.
     fake.events.add(ForegroundAppTracker.ForegroundEvent("com.game", 9_900))
     assertEquals("com.game", tracker.update(10_500))
+  }
+}
+
+internal class InstalledAppsTest {
+  @Test
+  fun categoryName_mapsAndroidCategoriesToDartNames() {
+    assertEquals("game", InstalledApps.categoryName(0))
+    assertEquals("social", InstalledApps.categoryName(4))
+    assertEquals("productivity", InstalledApps.categoryName(7))
+    assertEquals("accessibility", InstalledApps.categoryName(8))
+    assertEquals("undefined", InstalledApps.categoryName(-1))
+    assertEquals("undefined", InstalledApps.categoryName(42))
   }
 }

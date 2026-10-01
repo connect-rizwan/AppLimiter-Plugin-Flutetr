@@ -3,13 +3,12 @@
 // Android: grant the permissions first so the blocking path is covered:
 //   adb shell appops set com.example.app_limiter_example SYSTEM_ALERT_WINDOW allow
 //   adb shell appops set com.example.app_limiter_example GET_USAGE_STATS allow
-// Without them the tests check that blocking is refused with PERMISSION_DENIED.
+// Without them the tests check that blocking is refused with permissionDenied.
 //
-// Run with: flutter test integration_test
+// Run with: flutter test integration_test --no-uninstall
 
 import 'dart:io';
 
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
@@ -18,123 +17,147 @@ import 'package:app_limiter/app_limiter.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  final plugin = AppLimiter();
+  final limiter = AppLimiter();
+
+  Matcher throwsAppLimiter(AppLimiterErrorCode code) =>
+      throwsA(isA<AppLimiterException>().having((e) => e.code, 'code', code));
 
   testWidgets('getPlatformVersion', (WidgetTester tester) async {
-    final String? version = await plugin.getPlatformVersion();
+    final String? version = await limiter.getPlatformVersion();
     expect(version?.isNotEmpty, true);
   });
 
-  testWidgets('getPlatformCapabilities reports the platform', (tester) async {
-    final capabilities = await plugin.getPlatformCapabilities();
-    expect(capabilities['platform'], Platform.isAndroid ? 'android' : 'ios');
+  testWidgets('getPermissionStatus', (tester) async {
+    final status = await limiter.getPermissionStatus();
+    if (Platform.isIOS) {
+      expect(status.iosAuthorizationStatus, isNotNull);
+    } else {
+      expect(status.iosAuthorizationStatus, isNull);
+    }
   });
 
   group('Android', () {
     const target = 'com.android.chrome';
 
     tearDown(() async {
-      await plugin.unblockAllAndroidApps();
+      await limiter.unblockAll();
     });
 
     testWidgets('empty package name is rejected', (tester) async {
       expect(
-        () => plugin.blockAndroidApp(packageName: ''),
-        throwsArgumentError,
+        () => limiter.android.blockApp(''),
+        throwsAppLimiter(AppLimiterErrorCode.invalidArgument),
       );
     });
 
-    testWidgets('block and unblock a package', (tester) async {
-      final allowed = await plugin.isAndroidPermissionAllowed();
+    testWidgets('iOS APIs report unsupported', (tester) async {
+      expect(
+        () => limiter.ios.showAppPicker(),
+        throwsAppLimiter(AppLimiterErrorCode.unsupported),
+      );
+    });
+
+    testWidgets('getInstalledApps lists launchable apps with icons', (
+      tester,
+    ) async {
+      final apps = await limiter.android.getInstalledApps(includeIcons: true);
+
+      expect(apps, isNotEmpty);
+      expect(
+        apps.map((a) => a.packageName),
+        isNot(contains('com.example.app_limiter_example')),
+      );
+      final chrome = apps.firstWhere((a) => a.packageName == target);
+      expect(chrome.name, isNotEmpty);
+      expect(chrome.isSystemApp, isTrue);
+      expect(chrome.icon, isNotNull);
+      // PNG signature.
+      expect(chrome.icon!.sublist(0, 4), [137, 80, 78, 71]);
+
+      final sorted = [...apps.map((a) => a.name.toLowerCase())];
+      expect(sorted, [...sorted]..sort());
+
+      final userApps = await limiter.android.getInstalledApps(
+        includeSystemApps: false,
+      );
+      expect(userApps.every((a) => !a.isSystemApp), isTrue);
+      expect(userApps.every((a) => a.icon == null), isTrue);
+    });
+
+    testWidgets('block and unblock apps', (tester) async {
+      final allowed = (await limiter.getPermissionStatus()).isGranted;
       if (!allowed) {
         await expectLater(
-          plugin.blockAndroidApp(packageName: target),
-          throwsA(
-            isA<PlatformException>().having(
-              (e) => e.code,
-              'code',
-              'PERMISSION_DENIED',
-            ),
-          ),
+          limiter.android.blockApp(target),
+          throwsAppLimiter(AppLimiterErrorCode.permissionDenied),
         );
-        expect(await plugin.isAndroidBlockingActive(), isFalse);
+        expect((await limiter.getBlockingState()).isActive, isFalse);
         return;
       }
 
-      final stateEvents = <Map<String, dynamic>>[];
-      final subscription = plugin.events
-          .where((e) => e['name'] == 'android_blocking_state_changed')
+      final stateEvents = <AppLimiterEvent>[];
+      final subscription = limiter.events
+          .where((e) => e.type == AppLimiterEventType.blockingStateChanged)
           .listen(stateEvents.add);
 
       // Starts the foreground service; this crashed on Android 14+ before
       // the service declared a foreground service type.
-      await plugin.blockAndroidApp(packageName: target);
+      await limiter.android.blockApps([target, 'com.google.android.youtube']);
       await tester.pump(const Duration(seconds: 2));
-      expect(await plugin.isAndroidBlockingActive(), isTrue);
-      expect(await plugin.getBlockedAndroidApps(), contains(target));
-
-      // Calling again must not start a second blocking loop or crash.
-      await plugin.blockAndroidApp(packageName: target);
-      await plugin.blockAndroidApp(packageName: 'com.android.settings');
-      expect(
-        await plugin.getBlockedAndroidApps(),
-        [target, 'com.android.settings']..sort(),
-      );
+      var state = await limiter.getBlockingState();
+      expect(state.isActive, isTrue);
+      expect(state.blockedPackages, [target, 'com.google.android.youtube']);
 
       // Unblocking one package keeps the others blocked.
-      await plugin.unblockAndroidApp(packageName: target);
-      expect(await plugin.isAndroidBlockingActive(), isTrue);
-      expect(await plugin.getBlockedAndroidApps(), ['com.android.settings']);
+      await limiter.android.unblockApp(target);
+      state = await limiter.getBlockingState();
+      expect(state.isActive, isTrue);
+      expect(state.blockedPackages, ['com.google.android.youtube']);
 
-      await plugin.unblockAndroidApp(packageName: 'com.android.settings');
-      expect(await plugin.isAndroidBlockingActive(), isFalse);
+      await limiter.android.unblockApp('com.google.android.youtube');
+      expect((await limiter.getBlockingState()).isActive, isFalse);
 
       await tester.pump(const Duration(milliseconds: 500));
       await subscription.cancel();
       expect(stateEvents, isNotEmpty);
-      expect(stateEvents.last['payload']['active'], isFalse);
+      expect(stateEvents.last.payload['active'], isFalse);
     });
 
     testWidgets('block all and unblock all', (tester) async {
-      if (!await plugin.isAndroidPermissionAllowed()) return;
+      if (!(await limiter.getPermissionStatus()).isGranted) return;
 
-      await plugin.blockAllAndroidApps();
+      await limiter.android.blockAllApps();
       await tester.pump(const Duration(seconds: 1));
-      expect(await plugin.isAndroidBlockingActive(), isTrue);
-      final capabilities = await plugin.getPlatformCapabilities();
-      expect(capabilities['blockAll'], isTrue);
+      final state = await limiter.getBlockingState();
+      expect(state.isActive, isTrue);
+      expect(state.blockAll, isTrue);
 
-      await plugin.unblockAllAndroidApps();
-      expect(await plugin.isAndroidBlockingActive(), isFalse);
-      expect(await plugin.getBlockedAndroidApps(), isEmpty);
+      await limiter.unblockAll();
+      expect(
+        await limiter.getBlockingState(),
+        const BlockingState(isActive: false),
+      );
     });
   }, skip: !Platform.isAndroid);
 
   group('iOS', () {
-    testWidgets('authorization status is reported', (tester) async {
-      final status = await plugin.getIOSAuthorizationStatus();
-      expect(['notDetermined', 'denied', 'approved'], contains(status));
+    testWidgets('unblockAll clears shields', (tester) async {
+      await limiter.unblockAll();
+      expect((await limiter.getBlockingState()).isActive, isFalse);
     });
 
-    testWidgets('unblock clears shields', (tester) async {
-      await plugin.unblockIOSApps();
-      expect(await plugin.isIOSAppsBlocked(), isFalse);
+    testWidgets('Android APIs report unsupported', (tester) async {
+      expect(
+        () => limiter.android.getInstalledApps(),
+        throwsAppLimiter(AppLimiterErrorCode.unsupported),
+      );
     });
 
-    testWidgets('blockIOSApps without access or selection fails', (
-      tester,
-    ) async {
-      final status = await plugin.getIOSAuthorizationStatus();
-      if (status == 'approved') return;
+    testWidgets('blockSelectedApps without access fails', (tester) async {
+      if ((await limiter.getPermissionStatus()).isGranted) return;
       await expectLater(
-        plugin.blockIOSApps(),
-        throwsA(
-          isA<PlatformException>().having(
-            (e) => e.code,
-            'code',
-            'PERMISSION_DENIED',
-          ),
-        ),
+        limiter.ios.blockSelectedApps(),
+        throwsAppLimiter(AppLimiterErrorCode.permissionDenied),
       );
     });
   }, skip: !Platform.isIOS);

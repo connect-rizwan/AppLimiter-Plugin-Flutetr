@@ -1,3 +1,26 @@
+## [1.0.0] - Unreleased
+
+### Breaking
+- Android namespace changed from `com.example.app_limiter` to
+  `io.github.connectrizwan.app_limiter`. Saved blocking state is kept.
+- `events` emits typed `AppLimiterEvent`s instead of maps (`event.toMap()` gives the old shape).
+- Errors are thrown as `AppLimiterException` (with `AppLimiterErrorCode`) instead of
+  `PlatformException` / `ArgumentError`.
+- The platform interface was redesigned; custom `AppLimiterPlatform` implementations must be updated.
+
+### Added
+- Typed cross-platform API: `getPermissionStatus()`, `requestPermission()`,
+  `getBlockingState()`, `unblockAll()`, `AppLimiter.isSupported`.
+- Platform namespaces `limiter.android` and `limiter.ios`.
+- `android.getInstalledApps()` with names, categories, system flag and optional PNG icons.
+- `android.blockApps()` / `android.unblockApps()` for several packages at once.
+- `android.isEnterpriseCapable()`.
+- Android `requestPermission()` completes when the user returns from the settings screen.
+- `IosSchedule` type for iOS schedules.
+
+### Deprecated
+- All 0.x methods; they keep working and forward to the new API. See the migration table in the README.
+
 ## [0.1.0] - 2026-10-01
 
 ### Fixed

@@ -1,33 +1,43 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:app_limiter/app_limiter.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 void main() {
   runApp(const MyApp());
 }
 
-class MyApp extends StatefulWidget {
+class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
   @override
-  State<MyApp> createState() => _MyAppState();
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'App Limiter example',
+      theme: ThemeData(colorSchemeSeed: Colors.indigo),
+      home: const HomePage(),
+    );
+  }
 }
 
-class _MyAppState extends State<MyApp> {
-  final _appLimiterPlugin = AppLimiter();
-  final _scaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
-  final TextEditingController _androidPackageController = TextEditingController(
-    text: 'com.android.chrome',
-  );
-  StreamSubscription<Map<String, dynamic>>? _eventSubscription;
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  final _limiter = AppLimiter();
+  StreamSubscription<AppLimiterEvent>? _eventSubscription;
 
   String _platformVersion = 'Unknown';
-  Map<String, dynamic> _capabilities = const <String, dynamic>{};
-  final List<Map<String, dynamic>> _events = <Map<String, dynamic>>[];
+  PermissionStatus? _permissions;
+  BlockingState? _blocking;
+  bool _enterpriseCapable = false;
+  bool _enterpriseEnabled = false;
+  final List<AppLimiterEvent> _events = <AppLimiterEvent>[];
   bool _busy = false;
 
   bool get _isAndroid => defaultTargetPlatform == TargetPlatform.android;
@@ -36,166 +46,196 @@ class _MyAppState extends State<MyApp> {
   @override
   void initState() {
     super.initState();
-    initPlatformState();
-    _listenToEvents();
-    unawaited(refreshCapabilities());
+    _eventSubscription = _limiter.events.listen((event) {
+      if (!mounted) return;
+      setState(() {
+        _events.insert(0, event);
+        if (_events.length > 25) _events.removeLast();
+      });
+      unawaited(_refresh());
+    }, onError: (Object error) => debugPrint('Event stream error: $error'));
+    unawaited(_loadPlatformVersion());
+    unawaited(_refresh());
   }
 
   @override
   void dispose() {
     _eventSubscription?.cancel();
-    _androidPackageController.dispose();
     super.dispose();
   }
 
-  void _listenToEvents() {
-    _eventSubscription = _appLimiterPlugin.events.listen((event) {
+  Future<void> _loadPlatformVersion() async {
+    try {
+      final version = await _limiter.getPlatformVersion();
+      if (mounted) setState(() => _platformVersion = version ?? 'Unknown');
+    } on AppLimiterException catch (e) {
+      if (mounted) setState(() => _platformVersion = 'Failed: ${e.message}');
+    }
+  }
+
+  Future<void> _refresh() async {
+    if (!AppLimiter.isSupported) return;
+    try {
+      final permissions = await _limiter.getPermissionStatus();
+      final blocking = await _limiter.getBlockingState();
+      var enterpriseCapable = false;
+      var enterpriseEnabled = false;
+      if (_isAndroid) {
+        enterpriseCapable = await _limiter.android.isEnterpriseCapable();
+        enterpriseEnabled = await _limiter.android.isEnterpriseModeEnabled();
+      }
       if (!mounted) return;
       setState(() {
-        _events.insert(0, event);
-        if (_events.length > 25) {
-          _events.removeRange(25, _events.length);
-        }
+        _permissions = permissions;
+        _blocking = blocking;
+        _enterpriseCapable = enterpriseCapable;
+        _enterpriseEnabled = enterpriseEnabled;
       });
-      unawaited(refreshCapabilities());
-    }, onError: (Object error) => debugPrint('Event stream error: $error'));
-  }
-
-  Future<void> initPlatformState() async {
-    String platformVersion;
-    try {
-      platformVersion =
-          await _appLimiterPlugin.getPlatformVersion() ??
-          'Unknown platform version';
-    } on PlatformException {
-      platformVersion = 'Failed to get platform version.';
-    }
-
-    if (!mounted) return;
-    setState(() => _platformVersion = platformVersion);
-  }
-
-  Future<void> refreshCapabilities() async {
-    try {
-      final capabilities = await _appLimiterPlugin.getPlatformCapabilities();
-      if (!mounted) return;
-      setState(() => _capabilities = capabilities);
-    } catch (e) {
-      _showSnackBar('Failed to load capabilities: $e');
+    } on AppLimiterException catch (e) {
+      _showSnackBar('Failed to load status: ${e.message}');
     }
   }
 
-  /// Runs [action], shows its outcome, and refreshes the capability summary.
+  /// Runs [action], shows its outcome, and refreshes the status.
   Future<void> _run(String label, Future<Object?> Function() action) async {
     if (_busy) return;
     setState(() => _busy = true);
     try {
       final result = await action();
       _showSnackBar(result == null ? '$label: done' : '$label: $result');
-    } on PlatformException catch (e) {
-      _showSnackBar('$label failed: ${e.code} ${e.message ?? ''}');
-    } catch (e) {
-      _showSnackBar('$label failed: $e');
+    } on AppLimiterException catch (e) {
+      _showSnackBar('$label failed: ${e.code.name} – ${e.message}');
     } finally {
       if (mounted) setState(() => _busy = false);
-      await refreshCapabilities();
+      await _refresh();
     }
   }
 
   void _showSnackBar(String message) {
-    _scaffoldMessengerKey.currentState
-      ?..hideCurrentSnackBar()
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
-  String get _packageName => _androidPackageController.text.trim();
-
-  List<Widget> _androidSection() {
-    return [
-      _SectionTitle('Android'),
-      Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          ElevatedButton(
-            onPressed:
-                () => _run(
-                  'Permission',
-                  _appLimiterPlugin.isAndroidPermissionAllowed,
-                ),
-            child: const Text('Check permission'),
-          ),
-          ElevatedButton(
-            onPressed:
-                () => _run(
-                  'Request permission',
-                  _appLimiterPlugin.requestAndroidPermission,
-                ),
-            child: const Text('Request permission'),
-          ),
-        ],
+  Future<void> _chooseAndroidApps() async {
+    final current = _blocking?.blockedPackages.toSet() ?? <String>{};
+    final selected = await Navigator.of(context).push<Set<String>>(
+      MaterialPageRoute(
+        builder: (_) => AppPickerPage(limiter: _limiter, initial: current),
       ),
-      const SizedBox(height: 12),
-      TextField(
-        key: const Key('androidPackageField'),
-        controller: _androidPackageController,
-        decoration: const InputDecoration(
-          labelText: 'Android package name',
-          border: OutlineInputBorder(),
+    );
+    if (selected == null) return;
+
+    final toBlock = selected.difference(current).toList();
+    final toUnblock = current.difference(selected).toList();
+    await _run('Update blocked apps', () async {
+      await _limiter.android.blockApps(toBlock);
+      await _limiter.android.unblockApps(toUnblock);
+      return '${selected.length} blocked';
+    });
+  }
+
+  Widget _statusCard() {
+    final permissions = _permissions;
+    final blocking = _blocking;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Status',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Refresh',
+                  onPressed: _refresh,
+                  icon: const Icon(Icons.refresh),
+                ),
+              ],
+            ),
+            Text('Running on: $_platformVersion'),
+            if (!AppLimiter.isSupported)
+              const Text('This platform is not supported.'),
+            if (permissions != null)
+              Text(
+                permissions.isGranted
+                    ? 'Permissions: granted'
+                    : 'Missing permissions: '
+                        '${permissions.missing.map((p) => p.name).join(', ')}',
+                key: const Key('permissionText'),
+              ),
+            if (blocking != null)
+              Text(
+                'Blocking: ${blocking.isActive ? 'active' : 'off'}'
+                '${blocking.blockAll ? ' (all apps)' : ''}'
+                '${blocking.blockedPackages.isEmpty ? '' : ' – ${blocking.blockedPackages.length} apps'}'
+                '${_isIOS ? ' – selection: ${blocking.iosSelectedApplicationCount} apps, '
+                        '${blocking.iosSelectedCategoryCount} categories' : ''}',
+                key: const Key('blockingText'),
+              ),
+          ],
         ),
       ),
-      const SizedBox(height: 8),
+    );
+  }
+
+  List<Widget> _commonSection() {
+    return [
       Wrap(
         spacing: 8,
         runSpacing: 8,
         children: [
-          ElevatedButton(
+          FilledButton(
             onPressed:
-                () => _run(
-                  'Block $_packageName',
-                  () => _appLimiterPlugin.blockAndroidApp(
-                    packageName: _packageName,
-                  ),
-                ),
-            child: const Text('Block package'),
+                () => _run('Permission', () async {
+                  final status = await _limiter.requestPermission();
+                  return status.isGranted ? 'granted' : 'still missing';
+                }),
+            child: const Text('Request permission'),
           ),
-          ElevatedButton(
-            onPressed:
-                () => _run(
-                  'Unblock $_packageName',
-                  () => _appLimiterPlugin.unblockAndroidApp(
-                    packageName: _packageName,
-                  ),
-                ),
-            child: const Text('Unblock package'),
-          ),
-          ElevatedButton(
-            onPressed:
-                () => _run('Block all', _appLimiterPlugin.blockAllAndroidApps),
-            child: const Text('Block all apps'),
-          ),
-          ElevatedButton(
-            onPressed:
-                () => _run(
-                  'Unblock all',
-                  _appLimiterPlugin.unblockAllAndroidApps,
-                ),
+          OutlinedButton(
+            onPressed: () => _run('Unblock all', _limiter.unblockAll),
             child: const Text('Unblock all'),
           ),
         ],
       ),
-      const SizedBox(height: 8),
+    ];
+  }
+
+  List<Widget> _androidSection() {
+    return [
+      const _SectionTitle('Android'),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          ElevatedButton(
+            key: const Key('chooseAndroidApps'),
+            onPressed: _chooseAndroidApps,
+            child: const Text('Choose apps to block'),
+          ),
+          ElevatedButton(
+            onPressed: () => _run('Block all', _limiter.android.blockAllApps),
+            child: const Text('Block all apps'),
+          ),
+        ],
+      ),
       SwitchListTile.adaptive(
         contentPadding: EdgeInsets.zero,
         title: const Text('Enterprise mode (device owner only)'),
-        value: _capabilities['enterpriseModeEnabled'] == true,
+        value: _enterpriseEnabled,
         onChanged:
-            _capabilities['enterpriseCapable'] == true
+            _enterpriseCapable
                 ? (value) => _run(
                   'Enterprise mode',
-                  () => _appLimiterPlugin.setAndroidEnterpriseModeEnabled(
-                    enabled: value,
-                  ),
+                  () => _limiter.android.setEnterpriseModeEnabled(value),
                 )
                 : null,
       ),
@@ -204,42 +244,29 @@ class _MyAppState extends State<MyApp> {
 
   List<Widget> _iosSection() {
     return [
-      _SectionTitle('iOS (Screen Time)'),
+      const _SectionTitle('iOS (Screen Time)'),
       Wrap(
         spacing: 8,
         runSpacing: 8,
         children: [
           ElevatedButton(
             onPressed:
-                () =>
-                    _run('Permission', _appLimiterPlugin.requestIosPermission),
-            child: const Text('Request permission'),
-          ),
-          ElevatedButton(
-            onPressed: () => _run('Picker', _appLimiterPlugin.showIOSAppPicker),
+                () => _run('Picker', () async {
+                  final confirmed = await _limiter.ios.showAppPicker();
+                  return confirmed ? 'saved' : 'cancelled';
+                }),
             child: const Text('Choose apps'),
           ),
           ElevatedButton(
-            onPressed: () => _run('Block', _appLimiterPlugin.blockIOSApps),
+            onPressed: () => _run('Block', _limiter.ios.blockSelectedApps),
             child: const Text('Block selected'),
-          ),
-          ElevatedButton(
-            onPressed: () => _run('Unblock', _appLimiterPlugin.unblockIOSApps),
-            child: const Text('Unblock'),
           ),
           OutlinedButton(
             onPressed:
                 () => _run(
                   'Pick & block',
-                  () => _appLimiterPlugin.selectAndConfigureIosAppRestrictions(
-                    schedule: {
-                      'startHour': 9,
-                      'startMinute': 0,
-                      'endHour': 22,
-                      'endMinute': 0,
-                      'repeats': true,
-                      'thresholdMinutes': 30,
-                    },
+                  () => _limiter.ios.showAppPickerAndBlock(
+                    schedule: const IosSchedule(startHour: 9, endHour: 22),
                   ),
                 ),
             child: const Text('Pick & block in one step'),
@@ -249,77 +276,141 @@ class _MyAppState extends State<MyApp> {
     ];
   }
 
-  String _prettyEvent(Map<String, dynamic> event) {
-    try {
-      return const JsonEncoder.withIndent('  ').convert(event);
-    } catch (_) {
-      return event.toString();
-    }
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('App Limiter example')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          _statusCard(),
+          const SizedBox(height: 16),
+          if (AppLimiter.isSupported) ..._commonSection(),
+          if (_isAndroid) ..._androidSection(),
+          if (_isIOS) ..._iosSection(),
+          if (_busy) const LinearProgressIndicator(),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              const Expanded(child: _SectionTitle('Live plugin events')),
+              TextButton(
+                onPressed: () => setState(_events.clear),
+                child: const Text('Clear'),
+              ),
+            ],
+          ),
+          if (_events.isEmpty)
+            const Text('No events yet. Trigger actions to see updates.')
+          else
+            for (final event in _events)
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: Text(event.type.name),
+                subtitle: Text('${event.name} ${event.payload}'),
+              ),
+        ],
+      ),
+    );
   }
+}
+
+/// Lists installed apps with icons and returns the checked package names.
+class AppPickerPage extends StatefulWidget {
+  const AppPickerPage({
+    super.key,
+    required this.limiter,
+    required this.initial,
+  });
+
+  final AppLimiter limiter;
+  final Set<String> initial;
+
+  @override
+  State<AppPickerPage> createState() => _AppPickerPageState();
+}
+
+class _AppPickerPageState extends State<AppPickerPage> {
+  late final Future<List<InstalledApp>> _apps = widget.limiter.android
+      .getInstalledApps(includeIcons: true);
+  late final Set<String> _selected = {...widget.initial};
+  String _query = '';
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      scaffoldMessengerKey: _scaffoldMessengerKey,
-      home: Scaffold(
-        appBar: AppBar(title: const Text('Plugin example app')),
-        body: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            Text('Running on: $_platformVersion\n'),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Expanded(child: _SectionTitle('Status')),
-                        IconButton(
-                          tooltip: 'Refresh',
-                          onPressed: refreshCapabilities,
-                          icon: const Icon(Icons.refresh),
-                        ),
-                      ],
-                    ),
-                    SelectableText(
-                      _capabilities.isEmpty
-                          ? 'Not loaded'
-                          : _prettyEvent(_capabilities),
-                      key: const Key('capabilitiesText'),
-                    ),
-                  ],
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Block apps (${_selected.length})'),
+        actions: [
+          TextButton(
+            key: const Key('saveApps'),
+            onPressed: () => Navigator.of(context).pop(_selected),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+      body: FutureBuilder<List<InstalledApp>>(
+        future: _apps,
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Center(child: Text('Failed: ${snapshot.error}'));
+          }
+          final apps = snapshot.data;
+          if (apps == null) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          final query = _query.toLowerCase();
+          final visible =
+              apps
+                  .where(
+                    (app) =>
+                        app.name.toLowerCase().contains(query) ||
+                        app.packageName.contains(query),
+                  )
+                  .toList();
+          return Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(8),
+                child: TextField(
+                  decoration: const InputDecoration(
+                    prefixIcon: Icon(Icons.search),
+                    hintText: 'Search apps',
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: (value) => setState(() => _query = value),
                 ),
               ),
-            ),
-            const SizedBox(height: 16),
-            if (_isAndroid) ..._androidSection(),
-            if (_isIOS) ..._iosSection(),
-            if (_busy) const LinearProgressIndicator(),
-            const SizedBox(height: 24),
-            Row(
-              children: [
-                const Expanded(child: _SectionTitle('Live plugin events')),
-                TextButton(
-                  onPressed: () => setState(_events.clear),
-                  child: const Text('Clear'),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: visible.length,
+                  itemBuilder: (context, index) {
+                    final app = visible[index];
+                    return CheckboxListTile(
+                      key: ValueKey(app.packageName),
+                      value: _selected.contains(app.packageName),
+                      onChanged:
+                          (checked) => setState(() {
+                            checked == true
+                                ? _selected.add(app.packageName)
+                                : _selected.remove(app.packageName);
+                          }),
+                      secondary:
+                          app.icon == null
+                              ? const Icon(Icons.apps)
+                              : Image.memory(app.icon!, width: 40, height: 40),
+                      title: Text(app.name),
+                      subtitle: Text(
+                        '${app.packageName}'
+                        '${app.category == AppCategory.undefined ? '' : ' · ${app.category.name}'}',
+                      ),
+                    );
+                  },
                 ),
-              ],
-            ),
-            if (_events.isEmpty)
-              const Text('No events yet. Trigger actions to see updates.')
-            else
-              for (final event in _events)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: SelectableText(
-                    _prettyEvent(event),
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-          ],
-        ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

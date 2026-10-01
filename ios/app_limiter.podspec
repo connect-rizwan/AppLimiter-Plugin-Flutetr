@@ -4,7 +4,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'app_limiter'
-  s.version          = '0.1.0'
+  s.version          = '1.0.0'
   s.summary          = 'Limit screen time or block apps on Android and iOS.'
   s.description      = <<-DESC
 Flutter plugin that blocks apps using the Screen Time API (FamilyControls / ManagedSettings) on iOS.

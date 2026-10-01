@@ -1,6 +1,9 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'app_limiter_platform_interface.dart';
+import 'src/exception.dart';
+import 'src/models.dart';
 
 /// An implementation of [AppLimiterPlatform] that uses method channels.
 class MethodChannelAppLimiter extends AppLimiterPlatform {
@@ -8,14 +11,17 @@ class MethodChannelAppLimiter extends AppLimiterPlatform {
   final methodChannel = const MethodChannel('app_limiter');
   final eventChannel = const EventChannel('app_limiter/events');
 
-  late final Stream<Map<String, dynamic>> _events = eventChannel
+  late final Stream<AppLimiterEvent> _events = eventChannel
       .receiveBroadcastStream()
       .map((dynamic event) {
         if (event is Map) {
-          return _stringKeyed(event);
+          return AppLimiterEvent.fromMap(_stringKeyed(event));
         }
-        return <String, dynamic>{'name': 'unknown', 'payload': event};
+        return AppLimiterEvent.fromMap(<String, dynamic>{'payload': event});
       });
+
+  static bool get _isAndroid => defaultTargetPlatform == TargetPlatform.android;
+  static bool get _isIOS => defaultTargetPlatform == TargetPlatform.iOS;
 
   static Map<String, dynamic> _stringKeyed(Map<dynamic, dynamic> map) {
     return map.map(
@@ -24,175 +30,180 @@ class MethodChannelAppLimiter extends AppLimiterPlatform {
     );
   }
 
-  static void _requirePackageName(String packageName) {
-    if (packageName.trim().isEmpty) {
-      throw ArgumentError.value(
-        packageName,
-        'packageName',
-        'must not be empty',
+  static AppLimiterException _unsupportedPlatform() => AppLimiterException(
+    AppLimiterErrorCode.unsupported,
+    'app_limiter does not support ${defaultTargetPlatform.name}.',
+  );
+
+  /// Invokes [method], converting native failures to [AppLimiterException].
+  Future<T?> _invoke<T>(String method, [Object? arguments]) async {
+    try {
+      return await methodChannel.invokeMethod<T>(method, arguments);
+    } on PlatformException catch (e) {
+      throw AppLimiterException.fromPlatformException(e);
+    } on MissingPluginException {
+      throw AppLimiterException(
+        AppLimiterErrorCode.unsupported,
+        '$method is not available on ${defaultTargetPlatform.name}.',
       );
     }
   }
 
-  @override
-  Future<String?> getPlatformVersion() async {
-    final version = await methodChannel.invokeMethod<String>(
-      'getPlatformVersion',
+  Future<Map<String, dynamic>> _invokeMap(
+    String method, [
+    Object? arguments,
+  ]) async {
+    final result = await _invoke<Map<dynamic, dynamic>>(method, arguments);
+    return result == null ? <String, dynamic>{} : _stringKeyed(result);
+  }
+
+  static PermissionStatus _androidPermissionStatus(Map<String, dynamic> map) {
+    return PermissionStatus(
+      missing: {
+        if (map['overlay'] != true) AppPermission.overlay,
+        if (map['usageAccess'] != true) AppPermission.usageAccess,
+      },
+      optionalMissing: {
+        if (map['notifications'] == false) AppPermission.notifications,
+      },
     );
-    return version;
+  }
+
+  static PermissionStatus _iosPermissionStatus(IosAuthorizationStatus status) {
+    return PermissionStatus(
+      missing: {
+        if (status != IosAuthorizationStatus.approved) AppPermission.screenTime,
+      },
+      iosAuthorizationStatus: status,
+    );
+  }
+
+  // Common
+
+  @override
+  Future<String?> getPlatformVersion() => _invoke<String>('getPlatformVersion');
+
+  @override
+  Future<PermissionStatus> getPermissionStatus() async {
+    if (_isAndroid) {
+      return _androidPermissionStatus(await _invokeMap('getPermissionStatus'));
+    }
+    if (_isIOS) {
+      final status = await _invoke<String>('getAuthorizationStatus');
+      return _iosPermissionStatus(IosAuthorizationStatus.parse(status));
+    }
+    throw _unsupportedPlatform();
   }
 
   @override
-  Future<void> selectAndConfigureIosAppRestrictions({
-    Map<String, dynamic>? schedule,
+  Future<PermissionStatus> requestPermission([
+    AppPermission? permission,
+  ]) async {
+    if (_isAndroid) {
+      if (permission == AppPermission.screenTime) {
+        return getPermissionStatus();
+      }
+      return _androidPermissionStatus(
+        await _invokeMap('requestPermission', {'permission': permission?.name}),
+      );
+    }
+    if (_isIOS) {
+      if (permission == null || permission == AppPermission.screenTime) {
+        await _invoke<bool>('requestPermission');
+      }
+      return getPermissionStatus();
+    }
+    throw _unsupportedPlatform();
+  }
+
+  @override
+  Future<BlockingState> getBlockingState() async {
+    if (!_isAndroid && !_isIOS) throw _unsupportedPlatform();
+    final map = await _invokeMap('getBlockingState');
+    return BlockingState(
+      isActive: map['active'] == true,
+      blockAll: map['blockAll'] == true,
+      blockedPackages: List<String>.from(
+        map['blockedPackages'] as List? ?? const [],
+      ),
+      iosSelectedApplicationCount: map['applicationCount'] as int? ?? 0,
+      iosSelectedCategoryCount: map['categoryCount'] as int? ?? 0,
+      iosSelectedWebDomainCount: map['webDomainCount'] as int? ?? 0,
+    );
+  }
+
+  @override
+  Future<void> unblockAll() async {
+    if (_isAndroid) return _invoke<void>('unblockAllApps');
+    if (_isIOS) return _invoke<void>('unblockIOSApps');
+    throw _unsupportedPlatform();
+  }
+
+  @override
+  Stream<AppLimiterEvent> get events => _events;
+
+  @override
+  Future<Map<String, dynamic>> getCapabilities() =>
+      _invokeMap('getCapabilities');
+
+  // Android
+
+  @override
+  Future<void> androidBlockApps(List<String> packageNames) =>
+      _invoke<void>('blockApps', {'packageNames': packageNames});
+
+  @override
+  Future<void> androidUnblockApps(List<String> packageNames) =>
+      _invoke<void>('unblockApps', {'packageNames': packageNames});
+
+  @override
+  Future<void> androidBlockAllApps() => _invoke<void>('blockAllApps');
+
+  @override
+  Future<List<InstalledApp>> androidGetInstalledApps({
+    bool includeIcons = false,
+    bool includeSystemApps = true,
+    int iconSize = 96,
   }) async {
-    await methodChannel.invokeMethod<void>(
-      'selectAndConfigureIosAppRestrictions',
-      {'schedule': schedule},
-    );
-  }
-
-  @override
-  Future<void> configureIosSchedule(Map<String, dynamic> schedule) async {
-    await methodChannel.invokeMethod<void>('configureIosSchedule', {
-      'schedule': schedule,
+    final apps = await _invoke<List<dynamic>>('getInstalledApps', {
+      'includeIcons': includeIcons,
+      'includeSystemApps': includeSystemApps,
+      'iconSize': iconSize,
     });
+    return (apps ?? const [])
+        .whereType<Map>()
+        .map((app) => InstalledApp.fromMap(_stringKeyed(app)))
+        .toList();
   }
 
   @override
-  Future<void> blockAndUnblockIOSApp() async {
-    await selectAndConfigureIosAppRestrictions();
-  }
+  Future<bool> androidIsEnterpriseCapable() async =>
+      await _invoke<bool>('isEnterpriseCapable') ?? false;
 
   @override
-  Future<bool> showIOSAppPicker() async {
-    final confirmed = await methodChannel.invokeMethod<bool>('showAppPicker');
-    return confirmed ?? false;
-  }
+  Future<void> androidSetEnterpriseModeEnabled(bool enabled) =>
+      _invoke<void>('setEnterpriseMode', {'enabled': enabled});
 
   @override
-  Future<void> blockIOSApps() async {
-    await methodChannel.invokeMethod<void>('blockIOSApps');
-  }
+  Future<bool> androidIsEnterpriseModeEnabled() async =>
+      await _invoke<bool>('isEnterpriseModeEnabled') ?? false;
+
+  // iOS
 
   @override
-  Future<void> unblockIOSApps() async {
-    await methodChannel.invokeMethod<void>('unblockIOSApps');
-  }
+  Future<bool> iosShowAppPicker() async =>
+      await _invoke<bool>('showAppPicker') ?? false;
 
   @override
-  Future<bool> isIOSAppsBlocked() async {
-    final blocked = await methodChannel.invokeMethod<bool>('isIOSAppsBlocked');
-    return blocked ?? false;
-  }
+  Future<void> iosBlockSelectedApps() => _invoke<void>('blockIOSApps');
 
   @override
-  Future<String> getIOSAuthorizationStatus() async {
-    final status = await methodChannel.invokeMethod<String>(
-      'getAuthorizationStatus',
-    );
-    return status ?? 'notDetermined';
-  }
-
-  /// Requests iOS permissions through the native implementation
-  @override
-  Future<bool> requestIosPermission() async {
-    final result = await methodChannel.invokeMethod<bool>('requestPermission');
-    return result ?? false;
-  }
-
-  /// Checks Android permission status through the native implementation
-  @override
-  Future<bool> isAndroidPermissionAllowed() async {
-    final result = await methodChannel.invokeMethod<dynamic>('checkPermission');
-    if (result is bool) {
-      return result;
-    }
-    if (result is String) {
-      return result.toLowerCase() == 'approved';
-    }
-    return false;
-  }
-
-  /// Requests Android permissions through the native implementation
-  @override
-  Future<void> requestAndroidPermission() async {
-    await methodChannel.invokeMethod<void>('requestAuthorization');
-  }
+  Future<void> iosShowAppPickerAndBlock({Map<String, dynamic>? schedule}) =>
+      _invoke<void>('selectAndConfigureIosAppRestrictions', {
+        'schedule': schedule,
+      });
 
   @override
-  Future<void> blockAndroidApp({required String packageName}) async {
-    _requirePackageName(packageName);
-    await methodChannel.invokeMethod<void>('blockApp', {
-      'packageName': packageName.trim(),
-    });
-  }
-
-  @override
-  Future<void> unblockAndroidApp({required String packageName}) async {
-    _requirePackageName(packageName);
-    await methodChannel.invokeMethod<void>('unblockApp', {
-      'packageName': packageName.trim(),
-    });
-  }
-
-  @override
-  Future<void> blockAllAndroidApps() async {
-    await methodChannel.invokeMethod<void>('blockAllApps');
-  }
-
-  @override
-  Future<void> unblockAllAndroidApps() async {
-    await methodChannel.invokeMethod<void>('unblockAllApps');
-  }
-
-  @override
-  Future<void> blockAndroidApps() => blockAllAndroidApps();
-
-  @override
-  Future<void> unblockAndroidApps() => unblockAllAndroidApps();
-
-  @override
-  Future<List<String>> getBlockedAndroidApps() async {
-    final packages = await methodChannel.invokeListMethod<String>(
-      'getBlockedApps',
-    );
-    return packages ?? <String>[];
-  }
-
-  @override
-  Future<bool> isAndroidBlockingActive() async {
-    final active = await methodChannel.invokeMethod<bool>('isBlockingActive');
-    return active ?? false;
-  }
-
-  @override
-  Future<Map<String, dynamic>> getPlatformCapabilities() async {
-    final result = await methodChannel.invokeMethod<Map<dynamic, dynamic>>(
-      'getCapabilities',
-    );
-    if (result == null) {
-      return <String, dynamic>{};
-    }
-
-    return _stringKeyed(result);
-  }
-
-  @override
-  Future<void> setAndroidEnterpriseModeEnabled({required bool enabled}) async {
-    await methodChannel.invokeMethod<void>('setEnterpriseMode', {
-      'enabled': enabled,
-    });
-  }
-
-  @override
-  Future<bool> isAndroidEnterpriseModeEnabled() async {
-    final enabled = await methodChannel.invokeMethod<bool>(
-      'isEnterpriseModeEnabled',
-    );
-    return enabled ?? false;
-  }
-
-  @override
-  Stream<Map<String, dynamic>> getEventStream() => _events;
+  Future<void> iosConfigureSchedule(Map<String, dynamic> schedule) =>
+      _invoke<void>('configureIosSchedule', {'schedule': schedule});
 }

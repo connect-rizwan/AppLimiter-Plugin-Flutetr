@@ -1,4 +1,6 @@
+import 'package:app_limiter/app_limiter.dart';
 import 'package:app_limiter/app_limiter_method_channel.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -14,6 +16,9 @@ void main() {
   TestDefaultBinaryMessenger messenger() =>
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
+  Matcher throwsAppLimiter(AppLimiterErrorCode code) =>
+      throwsA(isA<AppLimiterException>().having((e) => e.code, 'code', code));
+
   setUp(() {
     platform = MethodChannelAppLimiter();
     calls = <MethodCall>[];
@@ -21,211 +26,296 @@ void main() {
     messenger().setMockMethodCallHandler(channel, (MethodCall call) async {
       calls.add(call);
       final response = responses[call.method];
-      return response?.call(call);
+      if (response == null) throw MissingPluginException();
+      return response(call);
     });
   });
 
   tearDown(() {
+    debugDefaultTargetPlatformOverride = null;
     messenger().setMockMethodCallHandler(channel, null);
     messenger().setMockStreamHandler(eventChannel, null);
   });
 
-  group('general', () {
-    test('getPlatformVersion', () async {
-      responses['getPlatformVersion'] = (_) => 'Android 16';
-      expect(await platform.getPlatformVersion(), 'Android 16');
-    });
+  group('errors', () {
+    test('PlatformException becomes AppLimiterException with mapped code', () {
+      responses['blockAllApps'] = (_) => throw PlatformException(
+        code: 'PERMISSION_DENIED',
+        message: 'nope',
+        details: 'x',
+      );
 
-    test(
-      'getPlatformCapabilities converts nested maps to String keys',
-      () async {
-        responses['getCapabilities'] = (_) => <Object?, Object?>{
-          'platform': 'android',
-          'enterpriseCapable': true,
-          'nested': <Object?, Object?>{'a': 1},
-        };
-
-        final capabilities = await platform.getPlatformCapabilities();
-
-        expect(capabilities['platform'], 'android');
-        expect(capabilities['enterpriseCapable'], true);
-        expect(capabilities['nested'], isA<Map<String, dynamic>>());
-      },
-    );
-
-    test('getPlatformCapabilities returns empty map on null', () async {
-      expect(await platform.getPlatformCapabilities(), isEmpty);
-    });
-
-    test('native errors are propagated as PlatformException', () async {
-      responses['blockAllApps'] = (_) =>
-          throw PlatformException(code: 'PERMISSION_DENIED', message: 'nope');
-
-      await expectLater(
-        platform.blockAllAndroidApps(),
+      expect(
+        platform.androidBlockAllApps(),
         throwsA(
-          isA<PlatformException>().having(
-            (e) => e.code,
-            'code',
-            'PERMISSION_DENIED',
-          ),
+          isA<AppLimiterException>()
+              .having(
+                (e) => e.code,
+                'code',
+                AppLimiterErrorCode.permissionDenied,
+              )
+              .having((e) => e.message, 'message', 'nope')
+              .having((e) => e.details, 'details', 'x'),
         ),
       );
+    });
+
+    test('unknown native codes map to unknown', () {
+      responses['blockAllApps'] = (_) =>
+          throw PlatformException(code: 'SOMETHING_NEW');
+      expect(
+        platform.androidBlockAllApps(),
+        throwsAppLimiter(AppLimiterErrorCode.unknown),
+      );
+    });
+
+    test('missing native method becomes unsupported', () {
+      expect(
+        platform.iosShowAppPicker(),
+        throwsAppLimiter(AppLimiterErrorCode.unsupported),
+      );
+    });
+
+    test('common methods throw unsupported on other platforms', () {
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+      expect(
+        platform.getPermissionStatus(),
+        throwsAppLimiter(AppLimiterErrorCode.unsupported),
+      );
+      expect(
+        platform.unblockAll(),
+        throwsAppLimiter(AppLimiterErrorCode.unsupported),
+      );
+      expect(calls, isEmpty);
     });
   });
 
   group('android', () {
-    test('blockAndroidApp sends trimmed package name', () async {
-      await platform.blockAndroidApp(packageName: '  com.example.target ');
-      expect(calls.single.method, 'blockApp');
-      expect(calls.single.arguments, {'packageName': 'com.example.target'});
-    });
-
-    test('unblockAndroidApp sends package name', () async {
-      await platform.unblockAndroidApp(packageName: 'com.example.target');
-      expect(calls.single.method, 'unblockApp');
-      expect(calls.single.arguments, {'packageName': 'com.example.target'});
-    });
-
-    test('empty package names are rejected before reaching native', () async {
-      expect(
-        () => platform.blockAndroidApp(packageName: ''),
-        throwsArgumentError,
-      );
-      expect(
-        () => platform.unblockAndroidApp(packageName: '   '),
-        throwsArgumentError,
-      );
-      expect(calls, isEmpty);
-    });
-
-    test('blockAllAndroidApps / unblockAllAndroidApps', () async {
-      await platform.blockAllAndroidApps();
-      await platform.unblockAllAndroidApps();
-      expect(calls.map((c) => c.method), ['blockAllApps', 'unblockAllApps']);
-    });
+    setUp(() => debugDefaultTargetPlatformOverride = TargetPlatform.android);
 
     test(
-      'deprecated blockAndroidApps / unblockAndroidApps map to all',
+      'getPermissionStatus parses required and optional permissions',
       () async {
-        // ignore: deprecated_member_use_from_same_package
-        await platform.blockAndroidApps();
-        // ignore: deprecated_member_use_from_same_package
-        await platform.unblockAndroidApps();
-        expect(calls.map((c) => c.method), ['blockAllApps', 'unblockAllApps']);
+        responses['getPermissionStatus'] = (_) => {
+          'overlay': true,
+          'usageAccess': false,
+          'notifications': false,
+        };
+
+        final status = await platform.getPermissionStatus();
+
+        expect(status.isGranted, isFalse);
+        expect(status.missing, {AppPermission.usageAccess});
+        expect(status.optionalMissing, {AppPermission.notifications});
+        expect(status.iosAuthorizationStatus, isNull);
       },
     );
 
-    test('getBlockedAndroidApps', () async {
-      responses['getBlockedApps'] = (_) => <Object?>['a.b', 'c.d'];
-      expect(await platform.getBlockedAndroidApps(), ['a.b', 'c.d']);
+    test('requestPermission sends the permission and returns status', () async {
+      responses['requestPermission'] = (_) => {
+        'overlay': true,
+        'usageAccess': true,
+        'notifications': true,
+      };
+
+      final status = await platform.requestPermission(AppPermission.overlay);
+
+      expect(calls.single.arguments, {'permission': 'overlay'});
+      expect(status.isGranted, isTrue);
+      expect(status.optionalMissing, isEmpty);
     });
 
-    test('getBlockedAndroidApps returns empty list on null', () async {
-      expect(await platform.getBlockedAndroidApps(), isEmpty);
+    test(
+      'requestPermission without argument asks for the next missing one',
+      () async {
+        responses['requestPermission'] = (_) => <String, Object>{};
+        await platform.requestPermission();
+        expect(calls.single.arguments, {'permission': null});
+      },
+    );
+
+    test('getBlockingState', () async {
+      responses['getBlockingState'] = (_) => {
+        'active': true,
+        'blockAll': false,
+        'blockedPackages': ['a.b', 'c.d'],
+      };
+
+      expect(
+        await platform.getBlockingState(),
+        const BlockingState(isActive: true, blockedPackages: ['a.b', 'c.d']),
+      );
     });
 
-    test('isAndroidBlockingActive', () async {
-      responses['isBlockingActive'] = (_) => true;
-      expect(await platform.isAndroidBlockingActive(), isTrue);
+    test('unblockAll calls unblockAllApps', () async {
+      responses['unblockAllApps'] = (_) => null;
+      await platform.unblockAll();
+      expect(calls.single.method, 'unblockAllApps');
     });
 
-    test('isAndroidPermissionAllowed handles bool and legacy string', () async {
-      responses['checkPermission'] = (_) => true;
-      expect(await platform.isAndroidPermissionAllowed(), isTrue);
+    test('block/unblock apps send package lists', () async {
+      responses['blockApps'] = (_) => null;
+      responses['unblockApps'] = (_) => null;
+      responses['blockAllApps'] = (_) => null;
 
-      responses['checkPermission'] = (_) => 'Approved';
-      expect(await platform.isAndroidPermissionAllowed(), isTrue);
+      await platform.androidBlockApps(['a.b', 'c.d']);
+      await platform.androidUnblockApps(['a.b']);
+      await platform.androidBlockAllApps();
 
-      responses['checkPermission'] = (_) => null;
-      expect(await platform.isAndroidPermissionAllowed(), isFalse);
+      expect(calls.map((c) => c.method), [
+        'blockApps',
+        'unblockApps',
+        'blockAllApps',
+      ]);
+      expect(calls[0].arguments, {
+        'packageNames': ['a.b', 'c.d'],
+      });
+      expect(calls[1].arguments, {
+        'packageNames': ['a.b'],
+      });
     });
 
-    test('requestAndroidPermission', () async {
-      responses['requestAuthorization'] = (_) => 'overlay_permission_requested';
-      await platform.requestAndroidPermission();
-      expect(calls.single.method, 'requestAuthorization');
+    test('getInstalledApps parses apps and passes options', () async {
+      final icon = Uint8List.fromList([1, 2, 3]);
+      responses['getInstalledApps'] = (_) => [
+        {
+          'packageName': 'com.google.android.youtube',
+          'name': 'YouTube',
+          'isSystemApp': true,
+          'category': 'video',
+          'icon': icon,
+        },
+        {'packageName': 'com.example.game', 'category': 'unexpected'},
+      ];
+
+      final apps = await platform.androidGetInstalledApps(
+        includeIcons: true,
+        includeSystemApps: false,
+        iconSize: 48,
+      );
+
+      expect(calls.single.arguments, {
+        'includeIcons': true,
+        'includeSystemApps': false,
+        'iconSize': 48,
+      });
+      expect(apps, hasLength(2));
+      expect(apps[0].name, 'YouTube');
+      expect(apps[0].isSystemApp, isTrue);
+      expect(apps[0].category, AppCategory.video);
+      expect(apps[0].icon, icon);
+      expect(apps[1].name, 'com.example.game');
+      expect(apps[1].category, AppCategory.undefined);
+      expect(apps[1].icon, isNull);
     });
 
-    test('setAndroidEnterpriseModeEnabled sends argument', () async {
-      await platform.setAndroidEnterpriseModeEnabled(enabled: true);
-      expect(calls.single.method, 'setEnterpriseMode');
-      expect(calls.single.arguments, {'enabled': true});
-    });
-
-    test('isAndroidEnterpriseModeEnabled', () async {
+    test('enterprise methods', () async {
+      responses['isEnterpriseCapable'] = (_) => true;
+      responses['setEnterpriseMode'] = (_) => null;
       responses['isEnterpriseModeEnabled'] = (_) => true;
-      expect(await platform.isAndroidEnterpriseModeEnabled(), isTrue);
+
+      expect(await platform.androidIsEnterpriseCapable(), isTrue);
+      await platform.androidSetEnterpriseModeEnabled(true);
+      expect(await platform.androidIsEnterpriseModeEnabled(), isTrue);
+      expect(calls[1].arguments, {'enabled': true});
     });
   });
 
   group('ios', () {
-    test('selectAndConfigureIosAppRestrictions sends schedule', () async {
-      final schedule = {'startHour': 9, 'endHour': 17, 'repeats': true};
-      await platform.selectAndConfigureIosAppRestrictions(schedule: schedule);
+    setUp(() => debugDefaultTargetPlatformOverride = TargetPlatform.iOS);
 
-      // Must not reuse Android's `blockApp`, which would block every app there.
-      expect(calls.single.method, 'selectAndConfigureIosAppRestrictions');
-      expect(calls.single.arguments, {'schedule': schedule});
+    test('getPermissionStatus maps authorization status', () async {
+      responses['getAuthorizationStatus'] = (_) => 'denied';
+      final denied = await platform.getPermissionStatus();
+      expect(denied.missing, {AppPermission.screenTime});
+      expect(denied.iosAuthorizationStatus, IosAuthorizationStatus.denied);
+
+      responses['getAuthorizationStatus'] = (_) => 'approved';
+      final approved = await platform.getPermissionStatus();
+      expect(approved.isGranted, isTrue);
     });
 
-    test('blockAndUnblockIOSApp uses the same picker call', () async {
-      await platform.blockAndUnblockIOSApp();
-      expect(calls.single.method, 'selectAndConfigureIosAppRestrictions');
-      expect(calls.single.arguments, {'schedule': null});
+    test('requestPermission prompts then returns status', () async {
+      responses['requestPermission'] = (_) => true;
+      responses['getAuthorizationStatus'] = (_) => 'approved';
+
+      final status = await platform.requestPermission();
+
+      expect(calls.map((c) => c.method), [
+        'requestPermission',
+        'getAuthorizationStatus',
+      ]);
+      expect(status.isGranted, isTrue);
     });
 
-    test('configureIosSchedule', () async {
-      await platform.configureIosSchedule({'thresholdMinutes': 30});
-      expect(calls.single.method, 'configureIosSchedule');
-      expect(calls.single.arguments, {
-        'schedule': {'thresholdMinutes': 30},
+    test(
+      'requestPermission for an Android permission does not prompt',
+      () async {
+        responses['getAuthorizationStatus'] = (_) => 'notDetermined';
+        await platform.requestPermission(AppPermission.overlay);
+        expect(calls.map((c) => c.method), ['getAuthorizationStatus']);
+      },
+    );
+
+    test('getBlockingState parses selection counts', () async {
+      responses['getBlockingState'] = (_) => {
+        'active': true,
+        'applicationCount': 2,
+        'categoryCount': 1,
+        'webDomainCount': 0,
+      };
+
+      final state = await platform.getBlockingState();
+
+      expect(state.isActive, isTrue);
+      expect(state.iosSelectedApplicationCount, 2);
+      expect(state.iosSelectedCategoryCount, 1);
+      expect(state.hasIosSelection, isTrue);
+    });
+
+    test('unblockAll calls unblockIOSApps', () async {
+      responses['unblockIOSApps'] = (_) => null;
+      await platform.unblockAll();
+      expect(calls.single.method, 'unblockIOSApps');
+    });
+
+    test('picker and blocking calls', () async {
+      responses['showAppPicker'] = (_) => true;
+      responses['blockIOSApps'] = (_) => null;
+      responses['selectAndConfigureIosAppRestrictions'] = (_) => null;
+      responses['configureIosSchedule'] = (_) => null;
+
+      expect(await platform.iosShowAppPicker(), isTrue);
+      await platform.iosBlockSelectedApps();
+      await platform.iosShowAppPickerAndBlock(schedule: {'startHour': 9});
+      await platform.iosConfigureSchedule({'endHour': 17});
+
+      expect(calls.map((c) => c.method), [
+        'showAppPicker',
+        'blockIOSApps',
+        'selectAndConfigureIosAppRestrictions',
+        'configureIosSchedule',
+      ]);
+      expect(calls[2].arguments, {
+        'schedule': {'startHour': 9},
+      });
+      expect(calls[3].arguments, {
+        'schedule': {'endHour': 17},
       });
     });
 
-    test('showIOSAppPicker returns confirmation', () async {
-      responses['showAppPicker'] = (_) => true;
-      expect(await platform.showIOSAppPicker(), isTrue);
-
-      responses['showAppPicker'] = (_) => false;
-      expect(await platform.showIOSAppPicker(), isFalse);
-    });
-
-    test('blockIOSApps / unblockIOSApps', () async {
-      await platform.blockIOSApps();
-      await platform.unblockIOSApps();
-      expect(calls.map((c) => c.method), ['blockIOSApps', 'unblockIOSApps']);
-    });
-
-    test('blockIOSApps propagates NO_SELECTION', () async {
+    test('blockIOSApps propagates noSelection', () {
       responses['blockIOSApps'] = (_) =>
           throw PlatformException(code: 'NO_SELECTION');
-      await expectLater(
-        platform.blockIOSApps(),
-        throwsA(isA<PlatformException>()),
+      expect(
+        platform.iosBlockSelectedApps(),
+        throwsAppLimiter(AppLimiterErrorCode.noSelection),
       );
-    });
-
-    test('isIOSAppsBlocked', () async {
-      responses['isIOSAppsBlocked'] = (_) => true;
-      expect(await platform.isIOSAppsBlocked(), isTrue);
-    });
-
-    test('getIOSAuthorizationStatus defaults to notDetermined', () async {
-      expect(await platform.getIOSAuthorizationStatus(), 'notDetermined');
-
-      responses['getAuthorizationStatus'] = (_) => 'approved';
-      expect(await platform.getIOSAuthorizationStatus(), 'approved');
-    });
-
-    test('requestIosPermission', () async {
-      responses['requestPermission'] = (_) => false;
-      expect(await platform.requestIosPermission(), isFalse);
     });
   });
 
   group('events', () {
-    test('maps native events to String-keyed maps', () async {
+    test('native events become typed AppLimiterEvents', () async {
       messenger().setMockStreamHandler(
         eventChannel,
         MockStreamHandler.inline(
@@ -233,25 +323,32 @@ void main() {
             sink.success(<Object?, Object?>{
               'name': 'android_blocking_state_changed',
               'payload': <Object?, Object?>{'active': true},
-              'timestamp': 1,
+              'timestamp': 1700000000,
             });
+            sink.success(<Object?, Object?>{'name': 'something_new'});
             sink.success('not a map');
             sink.endOfStream();
           },
         ),
       );
 
-      final events = await platform.getEventStream().toList();
+      final events = await platform.events.toList();
 
-      expect(events, hasLength(2));
-      expect(events[0]['name'], 'android_blocking_state_changed');
-      expect(events[0]['payload'], {'active': true});
-      expect(events[1], {'name': 'unknown', 'payload': 'not a map'});
+      expect(events, hasLength(3));
+      expect(events[0].type, AppLimiterEventType.blockingStateChanged);
+      expect(events[0].payload, {'active': true});
+      expect(
+        events[0].timestamp,
+        DateTime.fromMillisecondsSinceEpoch(1700000000 * 1000),
+      );
+      expect(events[1].type, AppLimiterEventType.unknown);
+      expect(events[1].name, 'something_new');
+      expect(events[2].payload, {'value': 'not a map'});
     });
 
     test('returns the same broadcast stream for every caller', () {
-      final stream = platform.getEventStream();
-      expect(identical(stream, platform.getEventStream()), isTrue);
+      final stream = platform.events;
+      expect(identical(stream, platform.events), isTrue);
       expect(stream.isBroadcast, isTrue);
     });
   });

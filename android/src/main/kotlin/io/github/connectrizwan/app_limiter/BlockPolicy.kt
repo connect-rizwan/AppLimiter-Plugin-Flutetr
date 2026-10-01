@@ -1,4 +1,4 @@
-package com.example.app_limiter
+package io.github.connectrizwan.app_limiter
 
 /** Pure decision logic for whether a foreground package should be covered. */
 internal object BlockPolicy {

@@ -1,193 +1,159 @@
+import 'package:flutter/foundation.dart';
+
 import 'app_limiter_platform_interface.dart';
+import 'src/models.dart';
+import 'src/platform_limiters.dart';
 
-/// A Flutter plugin for implementing app usage limitations and restrictions on iOS and Android platforms.
+export 'src/exception.dart';
+export 'src/models.dart';
+export 'src/platform_limiters.dart';
+
+/// Blocks apps on Android and iOS.
 ///
-/// This plugin provides functionality to:
-/// * Block and unblock apps on iOS devices
-/// * Block and unblock apps on Android devices
-/// * Handle platform-specific permissions
-/// * Check platform version and compatibility
+/// Common operations work on both platforms:
 ///
-/// Methods prefixed with `IOS`/`Ios` only work on iOS and methods prefixed
-/// with `Android` only work on Android. Calling them on the other platform
-/// throws a `MissingPluginException`.
+/// ```dart
+/// final limiter = AppLimiter();
+/// final status = await limiter.requestPermission();
+/// if (status.isGranted) {
+///   if (Platform.isAndroid) await limiter.android.blockApp('com.example');
+///   if (Platform.isIOS && await limiter.ios.showAppPicker()) {
+///     await limiter.ios.blockSelectedApps();
+///   }
+/// }
+/// await limiter.unblockAll();
+/// ```
+///
+/// Platform-specific operations live under [android] and [ios]. Every failure
+/// is reported as an `AppLimiterException`.
 class AppLimiter {
-  /// Gets the current platform version.
-  ///
-  /// Returns a [Future] that completes with the platform version as a [String],
-  /// or null if the platform version could not be determined.
-  Future<String?> getPlatformVersion() {
-    return AppLimiterPlatform.instance.getPlatformVersion();
-  }
+  AppLimiter();
 
-  /// Opens iOS app/category picker and shields the selection when the user
-  /// taps Done.
+  AppLimiterPlatform get _platform => AppLimiterPlatform.instance;
+
+  /// True on Android and iOS, the platforms this plugin supports.
+  static bool get isSupported =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
+
+  /// Android-only APIs.
+  final AndroidAppLimiter android = const AndroidAppLimiter();
+
+  /// iOS-only APIs.
+  final IosAppLimiter ios = const IosAppLimiter();
+
+  /// Gets the current platform version, e.g. `Android 15` or `iOS 18.1`.
+  Future<String?> getPlatformVersion() => _platform.getPlatformVersion();
+
+  /// Which permissions are granted.
+  Future<PermissionStatus> getPermissionStatus() =>
+      _platform.getPermissionStatus();
+
+  /// Requests [permission], or the next missing one when null (required
+  /// permissions first, then optional ones), and returns the updated status.
   ///
-  /// Completes once the picker is dismissed. [schedule] supports keys:
-  /// startHour, startMinute, endHour, endMinute, repeats, thresholdMinutes.
+  /// Android: opens the matching settings screen and completes when the user
+  /// returns to the app. Call it until [PermissionStatus.isGranted] is true;
+  /// each call handles one permission. Throws
+  /// [AppLimiterErrorCode.requestInProgress] while another request is open.
+  ///
+  /// iOS: shows the Screen Time prompt. After the user declines, iOS no longer
+  /// prompts; [PermissionStatus.iosAuthorizationStatus] is then `denied`.
+  Future<PermissionStatus> requestPermission([AppPermission? permission]) =>
+      _platform.requestPermission(permission);
+
+  /// What is currently blocked.
+  Future<BlockingState> getBlockingState() => _platform.getBlockingState();
+
+  /// Removes every block on the current platform.
+  ///
+  /// The iOS picker selection is kept, so `ios.blockSelectedApps()` can
+  /// re-apply it.
+  Future<void> unblockAll() => _platform.unblockAll();
+
+  /// Native events: blocking state changes, permission and selection updates.
+  Stream<AppLimiterEvent> get events => _platform.events;
+
+  // Deprecated 0.x API
+
+  @Deprecated('Use getPermissionStatus() or the typed APIs instead.')
+  Future<Map<String, dynamic>> getPlatformCapabilities() =>
+      _platform.getCapabilities();
+
+  @Deprecated('Use ios.showAppPickerAndBlock() instead.')
   Future<void> selectAndConfigureIosAppRestrictions({
     Map<String, dynamic>? schedule,
-  }) {
-    return AppLimiterPlatform.instance.selectAndConfigureIosAppRestrictions(
-      schedule: schedule,
-    );
-  }
+  }) => _platform.iosShowAppPickerAndBlock(schedule: schedule);
 
-  /// Updates iOS schedule without opening the picker.
-  Future<void> configureIosSchedule(Map<String, dynamic> schedule) {
-    return AppLimiterPlatform.instance.configureIosSchedule(schedule);
-  }
+  @Deprecated('Use ios.configureSchedule() instead.')
+  Future<void> configureIosSchedule(Map<String, dynamic> schedule) =>
+      _platform.iosConfigureSchedule(schedule);
 
-  /// Toggles iOS app restrictions.
-  @Deprecated('Use selectAndConfigureIosAppRestrictions instead.')
-  Future<void> blockAndUnblockIOSApp() {
-    return AppLimiterPlatform.instance.blockAndUnblockIOSApp();
-  }
+  @Deprecated('Use ios.showAppPickerAndBlock() instead.')
+  Future<void> blockAndUnblockIOSApp() => _platform.iosShowAppPickerAndBlock();
 
-  /// Shows the iOS app/category picker without blocking anything.
-  ///
-  /// The selection is saved on the device and used by [blockIOSApps].
-  /// Requests Screen Time authorization first if needed.
-  ///
-  /// Completes with true when the user tapped Done and false when the
-  /// picker was cancelled.
-  Future<bool> showIOSAppPicker() {
-    return AppLimiterPlatform.instance.showIOSAppPicker();
-  }
+  @Deprecated('Use ios.showAppPicker() instead.')
+  Future<bool> showIOSAppPicker() => ios.showAppPicker();
 
-  /// Shields the apps and categories chosen with [showIOSAppPicker].
-  ///
-  /// Throws a `PlatformException` with code `NO_SELECTION` if nothing has
-  /// been selected yet, or `PERMISSION_DENIED` if Screen Time access has not
-  /// been granted.
-  Future<void> blockIOSApps() {
-    return AppLimiterPlatform.instance.blockIOSApps();
-  }
+  @Deprecated('Use ios.blockSelectedApps() instead.')
+  Future<void> blockIOSApps() => ios.blockSelectedApps();
 
-  /// Removes every iOS shield applied by this plugin.
-  ///
-  /// The saved selection is kept so [blockIOSApps] can be called again.
-  Future<void> unblockIOSApps() {
-    return AppLimiterPlatform.instance.unblockIOSApps();
-  }
+  @Deprecated('Use unblockAll() instead.')
+  Future<void> unblockIOSApps() => unblockAll();
 
-  /// Returns true if any iOS app or category is currently shielded.
-  Future<bool> isIOSAppsBlocked() {
-    return AppLimiterPlatform.instance.isIOSAppsBlocked();
-  }
+  @Deprecated('Use getBlockingState() instead.')
+  Future<bool> isIOSAppsBlocked() async => (await getBlockingState()).isActive;
 
-  /// Returns the Screen Time authorization status on iOS.
-  ///
-  /// One of `notDetermined`, `denied` or `approved`.
-  Future<String> getIOSAuthorizationStatus() {
-    return AppLimiterPlatform.instance.getIOSAuthorizationStatus();
-  }
+  @Deprecated('Use getPermissionStatus() instead.')
+  Future<String> getIOSAuthorizationStatus() async =>
+      (await getPermissionStatus()).iosAuthorizationStatus?.name ??
+      IosAuthorizationStatus.notDetermined.name;
 
-  /// Requests necessary permissions for app limiting functionality on iOS.
-  ///
-  /// Returns a [Future<bool>] that completes with:
-  /// * true - if permissions were successfully granted
-  /// * false - if permissions were denied
-  ///
-  /// Throws a `PlatformException` if the request itself fails.
-  Future<bool> requestIosPermission() {
-    return AppLimiterPlatform.instance.requestIosPermission();
-  }
+  @Deprecated('Use requestPermission() instead.')
+  Future<bool> requestIosPermission() async =>
+      (await requestPermission()).isGranted;
 
-  /// Checks if the required Android permissions are granted.
-  ///
-  /// Returns a [Future<bool>] that completes with:
-  /// * true - if all required permissions are granted
-  /// * false - if any required permission is missing
-  Future<bool> isAndroidPermissionAllowed() {
-    return AppLimiterPlatform.instance.isAndroidPermissionAllowed();
-  }
+  @Deprecated('Use getPermissionStatus() instead.')
+  Future<bool> isAndroidPermissionAllowed() async =>
+      (await getPermissionStatus()).isGranted;
 
-  /// Requests necessary permissions for app limiting functionality on Android.
-  ///
-  /// Each call opens the settings screen for the next missing permission
-  /// (overlay, then usage access, then notifications on Android 13+).
-  /// Throws a [PlatformException] if the permission request fails.
-  Future<void> requestAndroidPermission() {
-    return AppLimiterPlatform.instance.requestAndroidPermission();
-  }
+  @Deprecated('Use requestPermission() instead.')
+  Future<void> requestAndroidPermission() => requestPermission();
 
-  /// Blocks the specified Android app package.
-  ///
-  /// Throws an [ArgumentError] if [packageName] is empty.
-  Future<void> blockAndroidApp({required String packageName}) {
-    return AppLimiterPlatform.instance.blockAndroidApp(
-      packageName: packageName,
-    );
-  }
+  @Deprecated('Use android.blockApp() instead.')
+  Future<void> blockAndroidApp({required String packageName}) =>
+      android.blockApp(packageName);
 
-  /// Unblocks a previously blocked Android app package.
-  ///
-  /// Blocking stays active for any other blocked package.
-  /// Throws an [ArgumentError] if [packageName] is empty.
-  Future<void> unblockAndroidApp({required String packageName}) {
-    return AppLimiterPlatform.instance.unblockAndroidApp(
-      packageName: packageName,
-    );
-  }
+  @Deprecated('Use android.unblockApp() instead.')
+  Future<void> unblockAndroidApp({required String packageName}) =>
+      android.unblockApp(packageName);
 
-  /// Blocks every Android app with a launcher icon, preinstalled apps included.
-  ///
-  /// The host app, the home launcher, the phone dialer and Settings stay usable.
-  /// Settings can still be blocked explicitly with [blockAndroidApp].
-  Future<void> blockAllAndroidApps() {
-    return AppLimiterPlatform.instance.blockAllAndroidApps();
-  }
+  @Deprecated('Use android.blockAllApps() instead.')
+  Future<void> blockAllAndroidApps() => android.blockAllApps();
 
-  /// Removes every Android block and stops the blocking service.
-  Future<void> unblockAllAndroidApps() {
-    return AppLimiterPlatform.instance.unblockAllAndroidApps();
-  }
+  @Deprecated('Use unblockAll() instead.')
+  Future<void> unblockAllAndroidApps() => unblockAll();
 
-  /// Returns the package names blocked with [blockAndroidApp].
-  Future<List<String>> getBlockedAndroidApps() {
-    return AppLimiterPlatform.instance.getBlockedAndroidApps();
-  }
+  @Deprecated('Use getBlockingState() instead.')
+  Future<List<String>> getBlockedAndroidApps() async =>
+      (await getBlockingState()).blockedPackages;
 
-  /// Returns true while the Android blocking service is enforcing blocks.
-  Future<bool> isAndroidBlockingActive() {
-    return AppLimiterPlatform.instance.isAndroidBlockingActive();
-  }
+  @Deprecated('Use getBlockingState() instead.')
+  Future<bool> isAndroidBlockingActive() async =>
+      (await getBlockingState()).isActive;
 
-  /// Legacy misspelled wrapper kept for compatibility. Blocks all apps.
-  @Deprecated('Use blockAllAndroidApps instead.')
-  Future<void> blocAndroidApp() {
-    return AppLimiterPlatform.instance.blockAllAndroidApps();
-  }
+  @Deprecated('Use android.blockAllApps() instead.')
+  Future<void> blocAndroidApp() => android.blockAllApps();
 
-  /// Legacy misspelled wrapper kept for compatibility. Unblocks all apps.
-  @Deprecated('Use unblockAllAndroidApps instead.')
-  Future<void> unblocAndroidApp() {
-    return AppLimiterPlatform.instance.unblockAllAndroidApps();
-  }
+  @Deprecated('Use unblockAll() instead.')
+  Future<void> unblocAndroidApp() => unblockAll();
 
-  /// Returns plugin capabilities for the current platform.
-  Future<Map<String, dynamic>> getPlatformCapabilities() {
-    return AppLimiterPlatform.instance.getPlatformCapabilities();
-  }
+  @Deprecated('Use android.setEnterpriseModeEnabled() instead.')
+  Future<void> setAndroidEnterpriseModeEnabled({required bool enabled}) =>
+      android.setEnterpriseModeEnabled(enabled);
 
-  /// Enables or disables Android enterprise mode.
-  Future<void> setAndroidEnterpriseModeEnabled({required bool enabled}) {
-    return AppLimiterPlatform.instance.setAndroidEnterpriseModeEnabled(
-      enabled: enabled,
-    );
-  }
-
-  /// Returns true if Android enterprise mode is active.
-  Future<bool> isAndroidEnterpriseModeEnabled() {
-    return AppLimiterPlatform.instance.isAndroidEnterpriseModeEnabled();
-  }
-
-  /// Stream of plugin events such as blocking state, permission updates and
-  /// iOS schedule events.
-  ///
-  /// Each event is a map with `name`, `payload` and `timestamp` keys.
-  Stream<Map<String, dynamic>> get events {
-    return AppLimiterPlatform.instance.getEventStream();
-  }
+  @Deprecated('Use android.isEnterpriseModeEnabled() instead.')
+  Future<bool> isAndroidEnterpriseModeEnabled() =>
+      android.isEnterpriseModeEnabled();
 }

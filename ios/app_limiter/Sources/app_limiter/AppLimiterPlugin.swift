@@ -174,6 +174,15 @@ public class AppLimiterPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         case "isIOSAppsBlocked":
             result(MyModel.shared.isShieldActive)
 
+        case "getBlockingState":
+            let selection = MyModel.shared.selectionToDiscourage
+            result([
+                "active": MyModel.shared.isShieldActive,
+                "applicationCount": selection.applicationTokens.count,
+                "categoryCount": selection.categoryTokens.count,
+                "webDomainCount": selection.webDomainTokens.count,
+            ])
+
         case "getAuthorizationStatus":
             result(authorizationStatusString())
 
