@@ -1,4 +1,4 @@
-## [1.0.0] - Unreleased
+## [1.0.0] - 2026-10-01
 
 ### Breaking
 - Android namespace changed from `com.example.app_limiter` to
