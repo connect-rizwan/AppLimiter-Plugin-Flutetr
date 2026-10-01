@@ -91,6 +91,7 @@ class BlockingState {
     this.blockedUntil = const <String, DateTime>{},
     this.blockAllUntil,
     this.activeScheduleIds = const <String>[],
+    this.iosBlockedUntil,
     this.iosSelectedApplicationCount = 0,
     this.iosSelectedCategoryCount = 0,
     this.iosSelectedWebDomainCount = 0,
@@ -115,8 +116,11 @@ class BlockingState {
   /// Android: end time of a timed [blockAll], or null when it has no end.
   final DateTime? blockAllUntil;
 
-  /// Android: ids of schedules whose window is active right now.
+  /// Ids of schedules whose window is active right now.
   final List<String> activeScheduleIds;
+
+  /// iOS: end time of a timed `ios.blockSelectedApps(duration: ...)` block.
+  final DateTime? iosBlockedUntil;
 
   /// iOS: number of apps in the saved picker selection.
   final int iosSelectedApplicationCount;
@@ -144,6 +148,7 @@ class BlockingState {
       mapEquals(other.blockedUntil, blockedUntil) &&
       other.blockAllUntil == blockAllUntil &&
       listEquals(other.activeScheduleIds, activeScheduleIds) &&
+      other.iosBlockedUntil == iosBlockedUntil &&
       other.iosSelectedApplicationCount == iosSelectedApplicationCount &&
       other.iosSelectedCategoryCount == iosSelectedCategoryCount &&
       other.iosSelectedWebDomainCount == iosSelectedWebDomainCount;
@@ -159,6 +164,7 @@ class BlockingState {
     ),
     blockAllUntil,
     Object.hashAll(activeScheduleIds),
+    iosBlockedUntil,
     iosSelectedApplicationCount,
     iosSelectedCategoryCount,
     iosSelectedWebDomainCount,
@@ -589,4 +595,174 @@ class BlockSchedule {
   String toString() =>
       'BlockSchedule($id, $start-$end, weekdays: $weekdays, '
       '${allApps ? 'all apps except $except' : packages})';
+}
+
+/// Which iOS extensions and App Group the host app has set up.
+///
+/// [IosAppLimiter.setShield], timed blocks and schedules need them; see
+/// `ios/extension_templates/README.md`.
+@immutable
+class IosExtensionStatus {
+  const IosExtensionStatus({
+    this.appGroup,
+    this.appGroupAccessible = false,
+    this.hasShieldConfigurationExtension = false,
+    this.hasDeviceActivityMonitorExtension = false,
+  });
+
+  factory IosExtensionStatus.fromMap(Map<String, dynamic> map) {
+    return IosExtensionStatus(
+      appGroup: map['appGroup'] as String?,
+      appGroupAccessible: map['appGroupAccessible'] == true,
+      hasShieldConfigurationExtension:
+          map['shieldConfigurationExtension'] == true,
+      hasDeviceActivityMonitorExtension:
+          map['deviceActivityMonitorExtension'] == true,
+    );
+  }
+
+  /// Value of the `AppLimiterAppGroup` Info.plist key.
+  final String? appGroup;
+
+  /// True when the App Group container can be opened, i.e. the App Groups
+  /// capability with [appGroup] is enabled for the app.
+  final bool appGroupAccessible;
+
+  /// Needed by [IosAppLimiter.setShield].
+  final bool hasShieldConfigurationExtension;
+
+  /// Needed by timed blocks and [IosAppLimiter.setSchedule].
+  final bool hasDeviceActivityMonitorExtension;
+
+  @override
+  bool operator ==(Object other) =>
+      other is IosExtensionStatus &&
+      other.appGroup == appGroup &&
+      other.appGroupAccessible == appGroupAccessible &&
+      other.hasShieldConfigurationExtension ==
+          hasShieldConfigurationExtension &&
+      other.hasDeviceActivityMonitorExtension ==
+          hasDeviceActivityMonitorExtension;
+
+  @override
+  int get hashCode => Object.hash(
+    appGroup,
+    appGroupAccessible,
+    hasShieldConfigurationExtension,
+    hasDeviceActivityMonitorExtension,
+  );
+
+  @override
+  String toString() =>
+      'IosExtensionStatus(appGroup: $appGroup, accessible: $appGroupAccessible, '
+      'shield: $hasShieldConfigurationExtension, '
+      'monitor: $hasDeviceActivityMonitorExtension)';
+}
+
+/// Look of the iOS block screen (shield). Null fields keep Apple's default.
+///
+/// Needs the Shield Configuration extension. `{app}` in any text is replaced
+/// with the name of the blocked app, category or website.
+@immutable
+class IosShieldConfig {
+  const IosShieldConfig({
+    this.title,
+    this.subtitle,
+    this.primaryButtonLabel,
+    this.secondaryButtonLabel,
+    this.backgroundColor,
+    this.titleColor,
+    this.subtitleColor,
+    this.primaryButtonBackgroundColor,
+    this.primaryButtonLabelColor,
+    this.icon,
+  });
+
+  final String? title;
+  final String? subtitle;
+
+  /// Label of the main button, which closes the blocked app.
+  final String? primaryButtonLabel;
+
+  /// Shows a second button. Handling taps on it needs a Shield Action
+  /// extension in your app.
+  final String? secondaryButtonLabel;
+
+  final Color? backgroundColor;
+  final Color? titleColor;
+  final Color? subtitleColor;
+  final Color? primaryButtonBackgroundColor;
+  final Color? primaryButtonLabelColor;
+
+  /// PNG or JPEG bytes.
+  final Uint8List? icon;
+
+  Map<String, dynamic> toMap() => <String, dynamic>{
+    'title': title,
+    'subtitle': subtitle,
+    'primaryButtonLabel': primaryButtonLabel,
+    'secondaryButtonLabel': secondaryButtonLabel,
+    'backgroundColor': backgroundColor?.toARGB32(),
+    'titleColor': titleColor?.toARGB32(),
+    'subtitleColor': subtitleColor?.toARGB32(),
+    'primaryButtonBackgroundColor': primaryButtonBackgroundColor?.toARGB32(),
+    'primaryButtonLabelColor': primaryButtonLabelColor?.toARGB32(),
+    'icon': icon,
+  };
+}
+
+/// A recurring iOS block window for the apps chosen in the picker.
+///
+/// Needs the Device Activity Monitor extension. Each part of the window must
+/// last at least 15 minutes (an Apple limit); overnight windows are split at
+/// midnight.
+@immutable
+class IosBlockSchedule {
+  const IosBlockSchedule({
+    required this.id,
+    required this.start,
+    required this.end,
+    this.weekdays = BlockSchedule.allWeekdays,
+  });
+
+  factory IosBlockSchedule.fromMap(Map<String, dynamic> map) {
+    return IosBlockSchedule(
+      id: map['id'] as String,
+      start: DailyTime.fromMinuteOfDay(map['startMinute'] as int),
+      end: DailyTime.fromMinuteOfDay(map['endMinute'] as int),
+      weekdays: Set<int>.from(
+        map['weekdays'] as List? ?? BlockSchedule.allWeekdays,
+      ),
+    );
+  }
+
+  /// Identifies the schedule; setting a schedule with an existing id replaces it.
+  final String id;
+  final DailyTime start;
+  final DailyTime end;
+
+  /// Days the window starts on: `DateTime.monday` (1) to `DateTime.sunday` (7).
+  final Set<int> weekdays;
+
+  Map<String, dynamic> toMap() => <String, dynamic>{
+    'id': id,
+    'startMinute': start.minuteOfDay,
+    'endMinute': end.minuteOfDay,
+    'weekdays': (weekdays.toList()..sort()),
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is IosBlockSchedule &&
+      other.id == id &&
+      other.start == start &&
+      other.end == end &&
+      setEquals(other.weekdays, weekdays);
+
+  @override
+  int get hashCode =>
+      Object.hash(id, start, end, Object.hashAllUnordered(weekdays));
+
+  @override
+  String toString() => 'IosBlockSchedule($id, $start-$end, weekdays: $weekdays)';
 }

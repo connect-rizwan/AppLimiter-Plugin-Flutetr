@@ -106,8 +106,23 @@ abstract class AppLimiterPlatform extends PlatformInterface {
 
   Future<bool> iosShowAppPicker() => throw _unimplemented('iosShowAppPicker');
 
-  Future<void> iosBlockSelectedApps() =>
+  Future<void> iosBlockSelectedApps({Duration? duration}) =>
       throw _unimplemented('iosBlockSelectedApps');
+
+  Future<IosExtensionStatus> iosGetExtensionStatus() =>
+      throw _unimplemented('iosGetExtensionStatus');
+
+  Future<void> iosSetShield(IosShieldConfig config) =>
+      throw _unimplemented('iosSetShield');
+
+  Future<void> iosSetSchedule(IosBlockSchedule schedule) =>
+      throw _unimplemented('iosSetSchedule');
+
+  Future<void> iosRemoveSchedule(String id) =>
+      throw _unimplemented('iosRemoveSchedule');
+
+  Future<List<IosBlockSchedule>> iosGetSchedules() =>
+      throw _unimplemented('iosGetSchedules');
 
   Future<void> iosShowAppPickerAndBlock({Map<String, dynamic>? schedule}) =>
       throw _unimplemented('iosShowAppPickerAndBlock');

@@ -404,6 +404,114 @@ void main() {
       expect(calls.single.method, 'unblockIOSApps');
     });
 
+    test('extension status', () async {
+      responses['getExtensionStatus'] = (_) => {
+        'appGroup': 'group.com.example',
+        'appGroupAccessible': true,
+        'shieldConfigurationExtension': true,
+        'deviceActivityMonitorExtension': false,
+      };
+      expect(
+        await platform.iosGetExtensionStatus(),
+        const IosExtensionStatus(
+          appGroup: 'group.com.example',
+          appGroupAccessible: true,
+          hasShieldConfigurationExtension: true,
+        ),
+      );
+    });
+
+    test('setShield serializes colors and icon', () async {
+      responses['setShield'] = (_) => null;
+      final icon = Uint8List.fromList([9]);
+      await platform.iosSetShield(
+        IosShieldConfig(
+          title: 'Not now',
+          subtitle: '{app} is blocked',
+          primaryButtonLabel: 'Close',
+          backgroundColor: const Color(0xFF000000),
+          titleColor: const Color(0xFFFFFFFF),
+          icon: icon,
+        ),
+      );
+      final args = calls.single.arguments as Map;
+      expect(args['title'], 'Not now');
+      expect(args['subtitle'], '{app} is blocked');
+      expect(args['primaryButtonLabel'], 'Close');
+      expect(args['backgroundColor'], 0xFF000000);
+      expect(args['titleColor'], 0xFFFFFFFF);
+      expect(args['secondaryButtonLabel'], isNull);
+      expect(args['icon'], icon);
+    });
+
+    test('timed block sends the duration', () async {
+      responses['blockIOSApps'] = (_) => null;
+      await platform.iosBlockSelectedApps(
+        duration: const Duration(minutes: 20),
+      );
+      await platform.iosBlockSelectedApps();
+      expect(calls[0].arguments, {'durationMs': 20 * 60 * 1000});
+      expect(calls[1].arguments, isNull);
+    });
+
+    test('schedule methods', () async {
+      responses['setIosSchedule'] = (_) => null;
+      responses['removeIosSchedule'] = (_) => null;
+      responses['getIosSchedules'] = (_) => [
+        {
+          'id': 'night',
+          'startMinute': 1320,
+          'endMinute': 420,
+          'weekdays': [1, 2, 3, 4, 5],
+          'applicationCount': 3,
+        },
+      ];
+      const schedule = IosBlockSchedule(
+        id: 'night',
+        start: DailyTime(22),
+        end: DailyTime(7),
+        weekdays: BlockSchedule.workdays,
+      );
+
+      await platform.iosSetSchedule(schedule);
+      await platform.iosRemoveSchedule('night');
+
+      expect(calls[0].arguments, {
+        'id': 'night',
+        'startMinute': 1320,
+        'endMinute': 420,
+        'weekdays': [1, 2, 3, 4, 5],
+      });
+      expect(calls[1].arguments, {'id': 'night'});
+      expect(await platform.iosGetSchedules(), [schedule]);
+    });
+
+    test(
+      'getBlockingState parses timed block end and active schedules',
+      () async {
+        responses['getBlockingState'] = (_) => {
+          'active': true,
+          'iosBlockedUntil': 1700000000000,
+          'activeScheduleIds': ['night'],
+        };
+        final state = await platform.getBlockingState();
+        expect(
+          state.iosBlockedUntil,
+          DateTime.fromMillisecondsSinceEpoch(1700000000000),
+        );
+        expect(state.activeScheduleIds, ['night']);
+      },
+    );
+
+    test('extensionMissing is mapped', () {
+      responses['setShield'] = (_) =>
+          throw PlatformException(code: 'EXTENSION_MISSING');
+      expect(
+        platform.iosSetShield(const IosShieldConfig()),
+        throwsAppLimiter(AppLimiterErrorCode.extensionMissing),
+      );
+    });
+
     test('picker and blocking calls', () async {
       responses['showAppPicker'] = (_) => true;
       responses['blockIOSApps'] = (_) => null;

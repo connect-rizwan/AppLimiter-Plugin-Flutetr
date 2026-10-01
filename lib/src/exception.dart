@@ -30,6 +30,10 @@ enum AppLimiterErrorCode {
   /// Android: suspending or unsuspending packages failed.
   enterpriseActionFailed('ENTERPRISE_ACTION_FAILED'),
 
+  /// iOS: an app extension or the App Group this feature needs is not set
+  /// up. See `ios/extension_templates/README.md` and `ios.getExtensionStatus()`.
+  extensionMissing('EXTENSION_MISSING'),
+
   /// The method is not available on this platform or OS version.
   unsupported('UNSUPPORTED'),
 

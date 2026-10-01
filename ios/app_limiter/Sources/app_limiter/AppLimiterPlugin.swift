@@ -120,6 +120,18 @@ public class AppLimiterPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
             return
         }
 
+        if AuthorizationSettling.isSettled {
+            dispatch(call, result: result)
+        } else {
+            Task { @MainActor in
+                await AuthorizationSettling.settle()
+                self.dispatch(call, result: result)
+            }
+        }
+    }
+
+    @available(iOS 16.0, *)
+    private func dispatch(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         let arguments = call.arguments as? [String: Any]
 
         switch call.method {
@@ -164,10 +176,19 @@ public class AppLimiterPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
                 ))
                 return
             }
+            if let durationMs = arguments?["durationMs"] as? Int {
+                if let error = ExtensionFeatures.startTimedBlock(durationMs: durationMs) {
+                    result(error)
+                    return
+                }
+            } else {
+                ExtensionFeatures.cancelTimedBlock()
+            }
             MyModel.shared.setShieldRestrictions()
             result(nil)
 
         case "unblockIOSApps":
+            ExtensionFeatures.cancelTimedBlock()
             MyModel.shared.clearShieldRestrictions()
             result(nil)
 
@@ -176,12 +197,46 @@ public class AppLimiterPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
 
         case "getBlockingState":
             let selection = MyModel.shared.selectionToDiscourage
+            let activeSchedules = ExtensionFeatures.activeScheduleIds()
             result([
-                "active": MyModel.shared.isShieldActive,
+                "active": MyModel.shared.isShieldActive || !activeSchedules.isEmpty,
                 "applicationCount": selection.applicationTokens.count,
                 "categoryCount": selection.categoryTokens.count,
                 "webDomainCount": selection.webDomainTokens.count,
+                "activeScheduleIds": activeSchedules,
+                "iosBlockedUntil": ExtensionFeatures.timedBlockUntil()
+                    .map { Int($0.timeIntervalSince1970 * 1000) } as Any,
             ])
+
+        case "getExtensionStatus":
+            result(ExtensionFeatures.status())
+
+        case "setShield":
+            result(ExtensionFeatures.setShield(arguments))
+
+        case "setIosSchedule":
+            guard AuthorizationCenter.shared.authorizationStatus == .approved else {
+                result(FlutterError(code: "PERMISSION_DENIED", message: "Screen Time access has not been granted.", details: nil))
+                return
+            }
+            guard MyModel.shared.hasDiscourageSelection else {
+                result(FlutterError(
+                    code: "NO_SELECTION",
+                    message: "No apps selected. Call ios.showAppPicker() first.",
+                    details: nil
+                ))
+                return
+            }
+            result(ExtensionFeatures.setSchedule(arguments, selection: MyModel.shared.selectionToDiscourage))
+
+        case "removeIosSchedule":
+            if let id = arguments?["id"] as? String {
+                ExtensionFeatures.removeSchedule(id)
+            }
+            result(nil)
+
+        case "getIosSchedules":
+            result(ExtensionFeatures.schedules())
 
         case "getAuthorizationStatus":
             result(authorizationStatusString())
@@ -332,5 +387,22 @@ public class AppLimiterPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         hostRef = host
         presenter.present(host, animated: true)
         emitEvent(name: "ios_picker_presented")
+    }
+}
+
+/// Right after launch iOS reports `.notDetermined` for about a second even when
+/// access was granted, then updates the value. Waiting once per launch keeps
+/// permission checks from failing during that window.
+/// Only touched from the main thread, where Flutter delivers method calls.
+@available(iOS 16.0, *)
+enum AuthorizationSettling {
+    private(set) static var isSettled = false
+
+    @MainActor
+    static func settle() async {
+        defer { isSettled = true }
+        for _ in 0..<20 where AuthorizationCenter.shared.authorizationStatus == .notDetermined {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
     }
 }

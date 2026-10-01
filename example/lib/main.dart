@@ -38,6 +38,8 @@ class _HomePageState extends State<HomePage> {
   bool _enterpriseCapable = false;
   bool _enterpriseEnabled = false;
   List<BlockSchedule> _schedules = const [];
+  IosExtensionStatus? _iosExtensions;
+  List<IosBlockSchedule> _iosSchedules = const [];
   final List<AppLimiterEvent> _events = <AppLimiterEvent>[];
   bool _busy = false;
 
@@ -87,6 +89,12 @@ class _HomePageState extends State<HomePage> {
         enterpriseEnabled = await _limiter.android.isEnterpriseModeEnabled();
         schedules = await _limiter.android.getSchedules();
       }
+      IosExtensionStatus? iosExtensions;
+      var iosSchedules = const <IosBlockSchedule>[];
+      if (_isIOS) {
+        iosExtensions = await _limiter.ios.getExtensionStatus();
+        iosSchedules = await _limiter.ios.getSchedules();
+      }
       if (!mounted) return;
       setState(() {
         _permissions = permissions;
@@ -94,6 +102,8 @@ class _HomePageState extends State<HomePage> {
         _enterpriseCapable = enterpriseCapable;
         _enterpriseEnabled = enterpriseEnabled;
         _schedules = schedules;
+        _iosExtensions = iosExtensions;
+        _iosSchedules = iosSchedules;
       });
     } on AppLimiterException catch (e) {
       _showSnackBar('Failed to load status: ${e.message}');
@@ -190,6 +200,57 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Future<(TimeOfDay, TimeOfDay)?> _pickWindow() async {
+    final start = await showTimePicker(
+      context: context,
+      helpText: 'Block from',
+      initialTime: const TimeOfDay(hour: 22, minute: 0),
+    );
+    if (start == null || !mounted) return null;
+    final end = await showTimePicker(
+      context: context,
+      helpText: 'Block until',
+      initialTime: const TimeOfDay(hour: 7, minute: 0),
+    );
+    return end == null ? null : (start, end);
+  }
+
+  Future<void> _addIosSchedule() async {
+    final window = await _pickWindow();
+    if (window == null) return;
+    final (start, end) = window;
+    await _run(
+      'Schedule',
+      () => _limiter.ios.setSchedule(
+        IosBlockSchedule(
+          id: 'schedule-${DateTime.now().millisecondsSinceEpoch}',
+          start: DailyTime(start.hour, start.minute),
+          end: DailyTime(end.hour, end.minute),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _setIosShield(bool custom) async {
+    await _run(
+      custom ? 'Custom shield' : 'Default shield',
+      () => _limiter.ios.setShield(
+        custom
+            ? const IosShieldConfig(
+              title: 'Not now',
+              subtitle: '{app} is blocked until you finish your focus time.',
+              primaryButtonLabel: 'Close',
+              backgroundColor: Color(0xFF1A237E),
+              titleColor: Colors.white,
+              subtitleColor: Color(0xFFC5CAE9),
+              primaryButtonBackgroundColor: Colors.white,
+              primaryButtonLabelColor: Color(0xFF1A237E),
+            )
+            : const IosShieldConfig(),
+      ),
+    );
+  }
+
   Future<void> _blockAllExcept() async {
     final allowed = await _pickApps(
       'Keep usable',
@@ -262,6 +323,7 @@ class _HomePageState extends State<HomePage> {
                 '${blocking.blockAll ? ' (all apps)' : ''}'
                 '${blocking.blockedPackages.isEmpty ? '' : ' – ${blocking.blockedPackages.length} apps'}'
                 '${blocking.allowedPackages.isEmpty ? '' : ' – ${blocking.allowedPackages.length} allowed'}'
+                '${blocking.iosBlockedUntil == null ? '' : ' until ${TimeOfDay.fromDateTime(blocking.iosBlockedUntil!).format(context)}'}'
                 '${_isIOS ? ' – selection: ${blocking.iosSelectedApplicationCount} apps, '
                         '${blocking.iosSelectedCategoryCount} categories' : ''}',
                 key: const Key('blockingText'),
@@ -405,6 +467,64 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
+      const _SectionTitle('iOS extensions'),
+      Text(
+        _iosExtensions == null
+            ? 'Not loaded'
+            : 'App Group: ${_iosExtensions!.appGroup ?? 'not set'}'
+                '${_iosExtensions!.appGroupAccessible ? '' : ' (not accessible)'}\n'
+                'Shield extension: ${_iosExtensions!.hasShieldConfigurationExtension ? 'yes' : 'no'}\n'
+                'Monitor extension: ${_iosExtensions!.hasDeviceActivityMonitorExtension ? 'yes' : 'no'}',
+        key: const Key('iosExtensionsText'),
+      ),
+      const SizedBox(height: 8),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          ElevatedButton(
+            onPressed:
+                () => _run(
+                  'Block for 15 minutes',
+                  () => _limiter.ios.blockSelectedApps(
+                    duration: const Duration(minutes: 15),
+                  ),
+                ),
+            child: const Text('Block for 15 min'),
+          ),
+          ElevatedButton(
+            onPressed: _addIosSchedule,
+            child: const Text('Add schedule…'),
+          ),
+          OutlinedButton(
+            onPressed: () => _setIosShield(true),
+            child: const Text('Custom shield'),
+          ),
+          OutlinedButton(
+            onPressed: () => _setIosShield(false),
+            child: const Text('Default shield'),
+          ),
+        ],
+      ),
+      for (final schedule in _iosSchedules)
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(
+            _blocking?.activeScheduleIds.contains(schedule.id) == true
+                ? Icons.lock_clock
+                : Icons.schedule,
+          ),
+          title: Text('${schedule.start} – ${schedule.end}'),
+          trailing: IconButton(
+            tooltip: 'Remove schedule',
+            icon: const Icon(Icons.delete_outline),
+            onPressed:
+                () => _run(
+                  'Remove schedule',
+                  () => _limiter.ios.removeSchedule(schedule.id),
+                ),
+          ),
+        ),
     ];
   }
 

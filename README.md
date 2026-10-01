@@ -9,6 +9,7 @@ A Flutter plugin to block apps and limit screen time on Android and iOS.
 - ✅ Android: customizable block screen and notification, "blocked app opened" events
 - ✅ Android: timed blocks and recurring schedules, enforced even while your app is closed
 - ✅ iOS: pick, block and unblock apps, categories and websites (Screen Time API)
+- ✅ iOS: custom block screen, timed blocks and schedules through ready-made app extensions
 - ✅ Blocking survives reboots and app updates on Android
 - ✅ Typed errors (`AppLimiterException` with an `AppLimiterErrorCode`)
 - ✅ Optional Android enterprise (device owner) package suspension
@@ -145,10 +146,36 @@ The default texts can also be translated by overriding the string resources
 
 ```dart
 Future<bool> showAppPicker()          // selection only; true if the user tapped Done
-Future<void> blockSelectedApps()      // shield the saved selection
+Future<void> blockSelectedApps({Duration? duration}) // shield the saved selection
 Future<void> showAppPickerAndBlock({IosSchedule? schedule})
-Future<void> configureSchedule(IosSchedule schedule)
+
+// Need the app extensions (see "iOS extensions" below)
+Future<IosExtensionStatus> getExtensionStatus()
+Future<void> setShield(IosShieldConfig config)
+Future<void> setSchedule(IosBlockSchedule schedule)
+Future<void> removeSchedule(String id)
+Future<List<IosBlockSchedule>> getSchedules()
 ```
+
+```dart
+await limiter.ios.setShield(
+  const IosShieldConfig(
+    title: 'Not now',
+    subtitle: '{app} is blocked until 6 pm.', // {app} = blocked app name
+    primaryButtonLabel: 'Close',
+    backgroundColor: Color(0xFF1A237E),
+    titleColor: Colors.white,
+  ),
+);
+await limiter.ios.blockSelectedApps(duration: const Duration(minutes: 30));
+await limiter.ios.setSchedule(
+  const IosBlockSchedule(id: 'bedtime', start: DailyTime(22), end: DailyTime(7)),
+);
+```
+
+A schedule blocks the apps chosen in the picker when it is set (a snapshot).
+Timed blocks and each part of a schedule window must last at least 15 minutes
+(an Apple limit); overnight windows are split at midnight.
 
 iOS never reveals which apps were chosen: the picker returns opaque tokens that
 stay on the device. `BlockingState` reports how many apps, categories and
@@ -169,6 +196,7 @@ Every failure is an `AppLimiterException`:
 | `noActivity` | Android call needs a foreground activity |
 | `requestInProgress` | Another `requestPermission()` is still waiting for the user |
 | `noViewController` | iOS picker could not be presented |
+| `extensionMissing` | iOS App Group or app extension not set up |
 | `authorizationFailed` | iOS Screen Time request failed (restricted device, ...) |
 | `enterpriseNotAvailable` / `enterpriseActionFailed` | Device owner operations failed |
 | `unsupported` | Wrong platform or OS version |
@@ -217,10 +245,22 @@ Behaviour:
    (entitlements do not go in `Info.plist`).
 2. Distribution builds need the Family Controls (Distribution) entitlement
    [requested from Apple](https://developer.apple.com/contact/request/family-controls-distribution).
-3. Schedules set with `configureSchedule` only take effect if your app ships a
-   `DeviceActivityMonitor` extension that applies shields on interval events.
-4. The iOS block screen (shield) uses Apple's default look. Customizing it needs a
-   `ShieldConfiguration` extension in your app; the plugin cannot do it for you.
+
+#### iOS extensions
+
+A custom block screen, timed blocks and schedules need two small app extensions
+in your app (Apple runs them while your app is closed). Add them with:
+
+```sh
+dart run app_limiter:setup_ios --app-group group.com.your.app
+```
+
+then open `ios/Runner.xcworkspace` once so Xcode can register the App Group and
+the extension IDs. Check the result with `ios.getExtensionStatus()`. Details and
+manual steps: [ios/extension_templates/README.md](ios/extension_templates/README.md).
+
+Family Controls only works with a paid Apple Developer team; Personal (free)
+teams cannot sign apps that use it.
 
 Both Swift Package Manager and CocoaPods are supported.
 

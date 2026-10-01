@@ -289,6 +289,80 @@ void main() {
       );
     });
 
+    testWidgets('example app has both extensions and the App Group', (
+      tester,
+    ) async {
+      final status = await limiter.ios.getExtensionStatus();
+      expect(status.appGroup, startsWith('group.'));
+      expect(status.appGroupAccessible, isTrue);
+      expect(status.hasShieldConfigurationExtension, isTrue);
+      expect(status.hasDeviceActivityMonitorExtension, isTrue);
+    });
+
+    testWidgets('shield configuration is accepted', (tester) async {
+      await limiter.ios.setShield(
+        const IosShieldConfig(title: 'Not now', subtitle: '{app} is blocked'),
+      );
+      await limiter.ios.setShield(const IosShieldConfig());
+    });
+
+    testWidgets('timed blocks shorter than 15 minutes are rejected', (
+      tester,
+    ) async {
+      expect(
+        () =>
+            limiter.ios.blockSelectedApps(duration: const Duration(minutes: 5)),
+        throwsAppLimiter(AppLimiterErrorCode.invalidArgument),
+      );
+    });
+
+    testWidgets('timed block and schedule with Screen Time access', (
+      tester,
+    ) async {
+      final state = await limiter.getBlockingState();
+      if (!(await limiter.getPermissionStatus()).isGranted ||
+          !state.hasIosSelection) {
+        markTestSkipped(
+          'Needs a one-time manual step: grant Screen Time access and '
+          'choose apps in the example app.',
+        );
+        return;
+      }
+
+      await limiter.ios.blockSelectedApps(
+        duration: const Duration(minutes: 15),
+      );
+      var blocked = await limiter.getBlockingState();
+      expect(blocked.isActive, isTrue);
+      expect(
+        blocked.iosBlockedUntil!.difference(DateTime.now()).inMinutes,
+        inInclusiveRange(14, 15),
+      );
+
+      final now = DateTime.now();
+      final end = now.add(const Duration(minutes: 30));
+      await limiter.ios.setSchedule(
+        IosBlockSchedule(
+          id: 'it-now',
+          start: DailyTime(now.hour, now.minute),
+          end: DailyTime(end.hour, end.minute),
+        ),
+      );
+      expect(
+        (await limiter.ios.getSchedules()).map((s) => s.id),
+        contains('it-now'),
+      );
+      blocked = await limiter.getBlockingState();
+      expect(blocked.activeScheduleIds, contains('it-now'));
+
+      await limiter.ios.removeSchedule('it-now');
+      await limiter.unblockAll();
+      blocked = await limiter.getBlockingState();
+      expect(blocked.isActive, isFalse);
+      expect(blocked.iosBlockedUntil, isNull);
+      expect(blocked.activeScheduleIds, isEmpty);
+    });
+
     testWidgets('blockSelectedApps without access fails', (tester) async {
       if ((await limiter.getPermissionStatus()).isGranted) return;
       await expectLater(

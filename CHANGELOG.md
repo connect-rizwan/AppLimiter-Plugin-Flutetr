@@ -30,12 +30,23 @@
 - Events `blockExpired`, `scheduleStarted` and `scheduleEnded` (Android).
 
 ### Fixed
+- iOS permission checks right after app launch reported `notDetermined` (and
+  blocking failed with `permissionDenied`) although access was granted.
 - Crash `ForegroundServiceDidNotStartInTimeException` when blocking was turned off
   right after it was turned on (for example a quick toggle) on Android 12+.
 - The block screen footer showed "Digital Wellbeing" (Google's product name); it now
   shows the host app's name.
 - A host app overriding the `block_overlay` layout no longer prevents the block screen
   from showing.
+
+### Added (iOS)
+- App extension templates (Shield Configuration, Device Activity Monitor) and a
+  `dart run app_limiter:setup_ios` command that adds them to an Xcode project.
+- `ios.setShield(IosShieldConfig)`: custom block screen with `{app}` placeholder.
+- `ios.blockSelectedApps(duration: ...)`: timed blocks that end while the app is closed.
+- `ios.setSchedule(IosBlockSchedule)`, `removeSchedule`, `getSchedules`.
+- `ios.getExtensionStatus()` and `AppLimiterErrorCode.extensionMissing`.
+- `BlockingState.iosBlockedUntil`; `activeScheduleIds` now also covers iOS.
 
 ### Deprecated
 - All 0.x methods; they keep working and forward to the new API. See the migration table in the README.

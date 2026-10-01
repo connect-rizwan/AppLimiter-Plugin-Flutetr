@@ -141,6 +141,9 @@ class MethodChannelAppLimiter extends AppLimiterPlatform {
       activeScheduleIds: List<String>.from(
         map['activeScheduleIds'] as List? ?? const [],
       ),
+      iosBlockedUntil: map['iosBlockedUntil'] == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(map['iosBlockedUntil'] as int),
       iosSelectedApplicationCount: map['applicationCount'] as int? ?? 0,
       iosSelectedCategoryCount: map['categoryCount'] as int? ?? 0,
       iosSelectedWebDomainCount: map['webDomainCount'] as int? ?? 0,
@@ -246,7 +249,35 @@ class MethodChannelAppLimiter extends AppLimiterPlatform {
       await _invoke<bool>('showAppPicker') ?? false;
 
   @override
-  Future<void> iosBlockSelectedApps() => _invoke<void>('blockIOSApps');
+  Future<void> iosBlockSelectedApps({Duration? duration}) => _invoke<void>(
+    'blockIOSApps',
+    duration == null ? null : {'durationMs': duration.inMilliseconds},
+  );
+
+  @override
+  Future<IosExtensionStatus> iosGetExtensionStatus() async =>
+      IosExtensionStatus.fromMap(await _invokeMap('getExtensionStatus'));
+
+  @override
+  Future<void> iosSetShield(IosShieldConfig config) =>
+      _invoke<void>('setShield', config.toMap());
+
+  @override
+  Future<void> iosSetSchedule(IosBlockSchedule schedule) =>
+      _invoke<void>('setIosSchedule', schedule.toMap());
+
+  @override
+  Future<void> iosRemoveSchedule(String id) =>
+      _invoke<void>('removeIosSchedule', {'id': id});
+
+  @override
+  Future<List<IosBlockSchedule>> iosGetSchedules() async {
+    final schedules = await _invoke<List<dynamic>>('getIosSchedules');
+    return (schedules ?? const [])
+        .whereType<Map>()
+        .map((schedule) => IosBlockSchedule.fromMap(_stringKeyed(schedule)))
+        .toList();
+  }
 
   @override
   Future<void> iosShowAppPickerAndBlock({Map<String, dynamic>? schedule}) =>

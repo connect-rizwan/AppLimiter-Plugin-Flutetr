@@ -143,7 +143,32 @@ class FakeAppLimiterPlatform extends AppLimiterPlatform
   }
 
   @override
-  Future<void> iosBlockSelectedApps() async => _record('iosBlockSelectedApps');
+  Future<void> iosBlockSelectedApps({Duration? duration}) async =>
+      _record('iosBlockSelectedApps', duration);
+
+  @override
+  Future<IosExtensionStatus> iosGetExtensionStatus() async {
+    _record('iosGetExtensionStatus');
+    return const IosExtensionStatus(appGroup: 'group.test');
+  }
+
+  @override
+  Future<void> iosSetShield(IosShieldConfig config) async =>
+      _record('iosSetShield', config);
+
+  @override
+  Future<void> iosSetSchedule(IosBlockSchedule schedule) async =>
+      _record('iosSetSchedule', schedule);
+
+  @override
+  Future<void> iosRemoveSchedule(String id) async =>
+      _record('iosRemoveSchedule', id);
+
+  @override
+  Future<List<IosBlockSchedule>> iosGetSchedules() async {
+    _record('iosGetSchedules');
+    return const [];
+  }
 
   @override
   Future<void> iosShowAppPickerAndBlock({
@@ -410,6 +435,68 @@ void main() {
         'thresholdMinutes': 1,
       });
       expect((fake.arguments[3] as Map)['repeats'], isFalse);
+    });
+
+    test('extension features are forwarded', () async {
+      const shield = IosShieldConfig(title: 'Not now');
+      const schedule = IosBlockSchedule(
+        id: 'night',
+        start: DailyTime(22),
+        end: DailyTime(7),
+      );
+
+      expect((await limiter.ios.getExtensionStatus()).appGroup, 'group.test');
+      await limiter.ios.setShield(shield);
+      await limiter.ios.blockSelectedApps(duration: const Duration(hours: 1));
+      await limiter.ios.setSchedule(schedule);
+      await limiter.ios.removeSchedule('night');
+      expect(await limiter.ios.getSchedules(), isEmpty);
+
+      expect(fake.calls, [
+        'iosGetExtensionStatus',
+        'iosSetShield',
+        'iosBlockSelectedApps',
+        'iosSetSchedule',
+        'iosRemoveSchedule',
+        'iosGetSchedules',
+      ]);
+      expect(fake.arguments[1], same(shield));
+      expect(fake.arguments[2], const Duration(hours: 1));
+      expect(fake.arguments[3], same(schedule));
+    });
+
+    test('iOS timed blocks must last at least 15 minutes', () {
+      expect(
+        () => limiter.ios.blockSelectedApps(
+          duration: const Duration(minutes: 14),
+        ),
+        throwsAppLimiter(AppLimiterErrorCode.invalidArgument),
+      );
+      expect(fake.calls, isEmpty);
+    });
+
+    test('invalid iOS schedules are rejected', () {
+      for (final schedule in const [
+        IosBlockSchedule(id: '', start: DailyTime(1), end: DailyTime(2)),
+        IosBlockSchedule(
+          id: 'x',
+          start: DailyTime(1),
+          end: DailyTime(2),
+          weekdays: {},
+        ),
+        IosBlockSchedule(
+          id: 'x',
+          start: DailyTime(1),
+          end: DailyTime(2),
+          weekdays: {8},
+        ),
+      ]) {
+        expect(
+          () => limiter.ios.setSchedule(schedule),
+          throwsAppLimiter(AppLimiterErrorCode.invalidArgument),
+        );
+      }
+      expect(fake.calls, isEmpty);
     });
 
     test('android APIs throw unsupported on iOS', () {

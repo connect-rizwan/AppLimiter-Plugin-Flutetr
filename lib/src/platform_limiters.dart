@@ -216,10 +216,71 @@ class IosAppLimiter {
 
   /// Shields the apps, categories and websites chosen with [showAppPicker].
   ///
-  /// Throws [AppLimiterErrorCode.noSelection] if nothing was chosen yet.
-  Future<void> blockSelectedApps() {
+  /// With a [duration] (at least 15 minutes, an Apple limit) the block ends
+  /// on its own, even while your app is closed; this needs the Device
+  /// Activity Monitor extension. Without one it lasts until
+  /// `AppLimiter.unblockAll()`.
+  ///
+  /// Throws [AppLimiterErrorCode.noSelection] if nothing was chosen yet and
+  /// [AppLimiterErrorCode.extensionMissing] if a duration is given but the
+  /// extension is not set up.
+  Future<void> blockSelectedApps({Duration? duration}) {
     _requireIOS('blockSelectedApps');
-    return _platform.iosBlockSelectedApps();
+    if (duration != null && duration < const Duration(minutes: 15)) {
+      throw const AppLimiterException(
+        AppLimiterErrorCode.invalidArgument,
+        'iOS timed blocks must last at least 15 minutes.',
+      );
+    }
+    return _platform.iosBlockSelectedApps(duration: duration);
+  }
+
+  /// Which extensions and App Group are set up in your app.
+  Future<IosExtensionStatus> getExtensionStatus() {
+    _requireIOS('getExtensionStatus');
+    return _platform.iosGetExtensionStatus();
+  }
+
+  /// Customizes the block screen. Needs the Shield Configuration extension.
+  ///
+  /// Pass `const IosShieldConfig()` to restore Apple's default.
+  Future<void> setShield(IosShieldConfig config) {
+    _requireIOS('setShield');
+    return _platform.iosSetShield(config);
+  }
+
+  /// Adds [schedule], or replaces the one with the same id, for the apps
+  /// currently chosen with [showAppPicker] (a snapshot: picking other apps
+  /// later does not change it).
+  ///
+  /// Needs the Device Activity Monitor extension. Schedules keep working while
+  /// your app is closed and are not removed by `AppLimiter.unblockAll()`.
+  Future<void> setSchedule(IosBlockSchedule schedule) {
+    _requireIOS('setSchedule');
+    final error = switch (schedule) {
+      _ when schedule.id.trim().isEmpty => 'id must not be empty.',
+      _
+          when schedule.weekdays.isEmpty ||
+              schedule.weekdays.any((day) => day < 1 || day > 7) =>
+        'weekdays must use DateTime.monday (1) to DateTime.sunday (7).',
+      _ => null,
+    };
+    if (error != null) {
+      throw AppLimiterException(AppLimiterErrorCode.invalidArgument, error);
+    }
+    return _platform.iosSetSchedule(schedule);
+  }
+
+  /// Removes the schedule with [id] and lifts its block.
+  Future<void> removeSchedule(String id) {
+    _requireIOS('removeSchedule');
+    return _platform.iosRemoveSchedule(id);
+  }
+
+  /// All iOS schedules, sorted by id.
+  Future<List<IosBlockSchedule>> getSchedules() {
+    _requireIOS('getSchedules');
+    return _platform.iosGetSchedules();
   }
 
   /// Shows the picker and shields the selection when the user taps Done.
